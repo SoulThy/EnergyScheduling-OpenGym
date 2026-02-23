@@ -324,3 +324,5 @@ _plots
 .idea
 table_*
 
+# Ignore cursor context file
+.cursorrules
