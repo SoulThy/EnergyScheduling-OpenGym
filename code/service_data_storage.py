@@ -165,7 +165,6 @@ class ServiceDataStorage:
         # noinspection SqlResolve
         self._db_cur.execute(
             f'''INSERT INTO episodes VALUES ({episode}, {node_uid}, {eps},{score}, {total_jobs}, {loss}, {mse}, {mae})''')
-        self._db.commit()
 
 
     def done_job(self, job: Job, reward: int):
@@ -194,7 +193,6 @@ class ServiceDataStorage:
                                     {job.get_total_time_execution()},
                                     {job.get_generated_at()})
                                 ''')
-        self._db.commit()
 
         # save to files
         self._rewards[job.get_originator_node_uid()] += reward
@@ -206,15 +204,15 @@ class ServiceDataStorage:
     def log_q_value(self, state, node_uid, episode, action, value):
         # noinspection SqlResolve
         self._db_cur.execute(f'''REPLACE INTO q_values VALUES ("{state}", {node_uid}, {episode}, {action}, {value})''')
-        self._db.commit()
 
     def log_q_value_at_time(self, time: int, state, node_uid, action, value):
         # noinspection SqlResolve
         self._db_cur.execute(f'''REPLACE INTO q_values_by_time VALUES (
                                     {time}, "{state}", {node_uid}, {action}, {value})''')
-        self._db.commit()
 
     def done_simulation(self):
+        # Persist all pending changes in a single transaction before dumping to disk.
+        self._db.commit()
         self._copy_db_to_file()
         self._save_models()
         self._db.close()
@@ -270,7 +268,6 @@ class ServiceDataStorage:
                         {battery_residual},
                         {variance}
             )''')
-        self._db.commit()
 
     def log_end_battery(self, timestamp, worker_id, max_battery):
         self._db_cur.execute(
@@ -279,4 +276,3 @@ class ServiceDataStorage:
                         {worker_id},
                         {max_battery}
             )''')
-        self._db.commit()
