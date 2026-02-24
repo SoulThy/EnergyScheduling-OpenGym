@@ -17,19 +17,35 @@ This capsule is private and its environment cannot be downloaded at this time. Y
 
 In your terminal, navigate to the folder where you've extracted the capsule and execute the following command:
 ```shell
-cd environment && docker build . --tag 80b76b50-df87-49d4-a8ec-79afc1762619; cd ..
+cd environment && docker build . --tag energysim; cd ..
 ```
 
 > This step will recreate the environment (i.e., the Docker image) locally, fetching and installing any required dependencies in the process. If any external resources have become unavailable for any reason, the environment will fail to build.
 
 ## Running the capsule to reproduce the results
 
-In your terminal, navigate to the folder where you've extracted the capsule and execute the following command, adjusting parameters as needed:
+In your terminal, navigate to the folder where you've extracted the capsule and execute one of the following commands, adjusting parameters as needed:
 ```shell
 docker run --platform linux/amd64 --rm \
+  --name energysim-sim \
   --workdir /code \
   --volume "$PWD/data":/data \
   --volume "$PWD/code":/code \
   --volume "$PWD/results":/results \
-  80b76b50-df87-49d4-a8ec-79afc1762619 bash run
+  energysim bash run
+```
+
+By default, the simulations are run in parallel according to the `DEFAULT_MAX_PARALLEL_SIMULATIONS` value defined in `code/config.py`. You can override this at runtime via the `MAX_PARALLEL_SIMULATIONS` environment variable that is read inside the container.
+
+To change the maximum number of parallel simulations, pass explicitly with `--env`:
+
+```shell
+docker run --platform linux/amd64 --rm \
+  --name energysim-sim \
+  --env MAX_PARALLEL_SIMULATIONS=8 \
+  --workdir /code \
+  --volume "$PWD/data":/data \
+  --volume "$PWD/code":/code \
+  --volume "$PWD/results":/results \
+  energysim bash run
 ```
