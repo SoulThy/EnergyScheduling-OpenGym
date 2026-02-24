@@ -16,6 +16,7 @@ import datetime as dt
 import simpy
 
 from cloud import Cloud
+from config import MAX_PARALLEL_SIMULATIONS
 from log import Log
 from models import SolarPanelSpec
 from node import Node
@@ -227,7 +228,7 @@ def gen_spec_solar_panels(n_nodes, simulation_time, start_date_str, latitude=41.
 
 if __name__ == "__main__":
     # Calculate the number of processes to launch based on CPU cores
-    num_cores = multiprocessing.cpu_count()
+    num_cores = MAX_PARALLEL_SIMULATIONS
 
     # Calculate the range of alphas to cover
     alpha_values =[i * ALPHA_INCREMENT for i in range(0, 21)]

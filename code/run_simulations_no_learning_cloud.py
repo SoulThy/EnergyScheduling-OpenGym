@@ -16,6 +16,7 @@ import datetime as dt
 import simpy
 
 from cloud import Cloud
+from config import MAX_PARALLEL_SIMULATIONS
 from log import Log
 from models import SolarPanelSpec
 from node import Node
@@ -167,7 +168,7 @@ def create_node(env, node_id, belong_to_cluster_id, node_type, machine_speed,bat
     
 if __name__ == "__main__":
     # Calculate the number of processes to launch based on CPU cores
-    num_cores = multiprocessing.cpu_count()
+    num_cores = MAX_PARALLEL_SIMULATIONS
 
     policies =  [Node.NoLearningPolicy.LEAST_LOADED_AWARE_CLOUD, Node.NoLearningPolicy.MAXIMUM_LIFESPANE, Node.NoLearningPolicy.RANDOM]
     # Launch processes

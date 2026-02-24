@@ -15,6 +15,7 @@
 import multiprocessing
 import os
 from datetime import datetime
+
 from plot_stacked_performances import plot_stacked
 from plot_table_cloud import append_row
 from run_simulations_no_learning_cloud import run_simulation as run_simulation_no_learning_cloud
@@ -22,6 +23,7 @@ from run_simulation_d_sarsa_cloud import run_simulation as run_simulation_cloud
 from run_simulations_no_learning import run_simulation as run_simulation_no_learning
 from run_simulation_d_sarsa import run_simulation as run_simulation
 from run_simulation_d_sarsa_cloud_failure import run_simulation as run_simulation_failure
+from config import MAX_PARALLEL_SIMULATIONS
 from node import Node
 
 ALPHA_INCREMENT = 0.05
@@ -35,8 +37,8 @@ os.makedirs(PATH_RESULTS_PLOT, exist_ok=True)
 os.makedirs(PATH_RESULTS_TABLE, exist_ok=True)
 
 
-# Calculate the number of processes to launch based on CPU cores
-num_cores = multiprocessing.cpu_count()
+# Calculate the number of processes to launch based on a shared configuration value
+num_cores = MAX_PARALLEL_SIMULATIONS
 
 # Calculate the range of alphas to cover
 alpha_values =[i * ALPHA_INCREMENT for i in range(0, 21)]
