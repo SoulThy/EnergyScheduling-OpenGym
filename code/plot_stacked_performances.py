@@ -61,12 +61,12 @@ def plot_stacked(session_id, alpha, type, path_results_plot, path_results_data):
     print(y_eps)
 
     cmap_def = plt.get_cmap("tab10")
-    PlotUtils.use_tex()
+    plt.rcParams['text.usetex'] = False
 
     fig, ax = plt.subplots(nrows=4, ncols=1, gridspec_kw={'height_ratios': [1, 2, 2, 2]})
 
     # make a plot
-    ax[0].plot(x_rewards, y_rewards, marker=r"$\triangle$", markersize=3.0, markeredgewidth=1, linewidth=0.7,
+    ax[0].plot(x_rewards, y_rewards, marker="^", markersize=3.0, markeredgewidth=1, linewidth=0.7,
             color=cmap_def(0))
     ax[0].set_ylabel(r"$R(\pi)$")
 
@@ -110,8 +110,7 @@ def plot_stacked(session_id, alpha, type, path_results_plot, path_results_data):
     x_arr.append(x)
     y_arr.append(y)
 
-
-    markers = [r"$\triangle$", r"$\square$", r"$\diamondsuit$", r"$\otimes$", r"$\star$"]
+    markers = ["^", "s", "D", "p", "*"]
 
     legend_arr = []
 
@@ -202,7 +201,6 @@ if __name__ == "__main__":
     SESSION_ID = datetime.now().strftime("%Y%m%d")
     PATH_RESULTS = "./results"
     PATH_RESULTS_PLOT = f"{PATH_RESULTS}/plot"
-    PATH_RESULTS_DATA = f"./"
+    PATH_RESULTS_DATA = f"../results/data"
 
     plot_stacked(SESSION_ID, alpha, type, PATH_RESULTS_PLOT, PATH_RESULTS_DATA)
-
