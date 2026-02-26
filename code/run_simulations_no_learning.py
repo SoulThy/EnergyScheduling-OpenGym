@@ -12,7 +12,7 @@ from datetime import datetime
 import simpy
 
 from cloud import Cloud
-from config import MAX_PARALLEL_SIMULATIONS
+from config import MAX_PARALLEL_SIMULATIONS, WORKER_BATTERY_CAPACITIES
 from log import Log
 from node import Node
 from service_data_storage import ServiceDataStorage
@@ -42,10 +42,13 @@ def run_simulation(policy):
     # create nodes
     cloud = Cloud(env, latency_roundtrip_ms=20)
 
+    # Worker battery capacities (Wh) for nodes 1, 2 and 3).
+    worker_batt_1, worker_batt_2, worker_batt_3 = WORKER_BATTERY_CAPACITIES
+
     nodes.append(create_node(env, 0, 0, Node.NodeType.SCHEDULER, 1.0, 10, policy))
-    nodes.append(create_node(env, 1, 0, Node.NodeType.WORKER, 1.8, 7, policy))
-    nodes.append(create_node(env, 2, 0, Node.NodeType.WORKER, 1.7, 8, policy))
-    nodes.append(create_node(env, 3, 0, Node.NodeType.WORKER, 1.4, 9, policy))
+    nodes.append(create_node(env, 1, 0, Node.NodeType.WORKER, 1.8, worker_batt_1, policy,))
+    nodes.append(create_node(env, 2, 0, Node.NodeType.WORKER, 1.7, worker_batt_2, policy,))
+    nodes.append(create_node(env, 3, 0, Node.NodeType.WORKER, 1.4, worker_batt_3, policy,))
     
     # add them discovery service
     discovery = ServiceDiscovery(1, nodes, cloud)

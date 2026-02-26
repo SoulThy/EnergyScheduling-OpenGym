@@ -16,7 +16,7 @@ import datetime as dt
 import simpy
 
 from cloud import Cloud
-from config import MAX_PARALLEL_SIMULATIONS
+from config import MAX_PARALLEL_SIMULATIONS, WORKER_BATTERY_CAPACITIES
 from log import Log
 from models import SolarPanelSpec
 from node import Node
@@ -73,13 +73,14 @@ def run_simulation(alpha):
             
     # create nodes
     cloud = Cloud(env, latency_roundtrip_ms=20)
-    
-    #1.8 1.7 1.4
+
+    # Worker battery capacities (Wh) for nodes 1, 2 and 3).
+    worker_batt_1, worker_batt_2, worker_batt_3 = WORKER_BATTERY_CAPACITIES
 
     nodes.append(create_node(env, 0, 0, Node.NodeType.SCHEDULER, 1.0, 10, alpha))
-    nodes.append(create_node(env, 1, 0, Node.NodeType.WORKER, 1.8, 9, alpha, solar_panel_spec_by_node_id.get(1)))
-    nodes.append(create_node(env, 2, 0, Node.NodeType.WORKER, 1.7, 8, alpha , solar_panel_spec_by_node_id.get(2)))
-    nodes.append(create_node(env, 3, 0, Node.NodeType.WORKER, 1.4, 7, alpha, solar_panel_spec_by_node_id.get(3)))
+    nodes.append(create_node(env, 1, 0, Node.NodeType.WORKER, 1.8, worker_batt_1, alpha, solar_panel_spec_by_node_id.get(1),))
+    nodes.append(create_node(env, 2, 0, Node.NodeType.WORKER, 1.7, worker_batt_2, alpha, solar_panel_spec_by_node_id.get(2),))
+    nodes.append(create_node(env, 3, 0, Node.NodeType.WORKER, 1.4, worker_batt_3, alpha, solar_panel_spec_by_node_id.get(3),))
 
     
     # add them discovery service
