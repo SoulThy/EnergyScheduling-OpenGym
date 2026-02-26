@@ -29,22 +29,22 @@ In your terminal, navigate to the folder where you've extracted the capsule and 
 docker run --platform linux/amd64 --rm \
   --name energysim-sim \
   --workdir /code \
-  --volume "$PWD/data":/data \
   --volume "$PWD/code":/code \
   --volume "$PWD/results":/results \
   energysim bash run
 ```
 
 By default, the simulations are run in parallel according to the `DEFAULT_MAX_PARALLEL_SIMULATIONS` value defined in `code/config.py`. You can override this at runtime via the `MAX_PARALLEL_SIMULATIONS` environment variable that is read inside the container.
+Battery Capacities for worker nodes also can be adjusted by environment variable or `code/config.py`.
 
-To change the maximum number of parallel simulations, pass explicitly with `--env`:
+To change the maximum number of parallel simulations and/or worker battery capacities, pass explicitly with `--env`:
 
 ```shell
 docker run --platform linux/amd64 --rm \
   --name energysim-sim \
-  --env MAX_PARALLEL_SIMULATIONS=8 \
+  --env WORKER_BATTERY_CAPACITIES=7,8,9 \
+  --env MAX_PARALLEL_SIMULATIONS=4 \
   --workdir /code \
-  --volume "$PWD/data":/data \
   --volume "$PWD/code":/code \
   --volume "$PWD/results":/results \
   energysim bash run
