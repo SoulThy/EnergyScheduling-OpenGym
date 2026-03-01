@@ -181,6 +181,7 @@ class SchedulingEnv(gym.Env):
             state_type=self._state_type,
             reward_alpha=self._reward_alpha,
             episode_length=self._episode_length,
+            gym_mode=True,
         )
         self._sim_env = env
         self._scheduler = nodes[0]

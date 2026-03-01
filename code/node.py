@@ -219,7 +219,9 @@ class Node:
                  pwr2_threshold=3,
                  pwr2_binary_policy=None,  # express like '11111',
                  # utils
-                 logging_info=True
+                 logging_info=True,
+                 # gym wrapper: when True, scheduler does not choose action; waits for env to put action in store
+                 gym_mode=False,
                  ):
 
         #
@@ -415,6 +417,19 @@ class Node:
         self._data_log = {}  # episode, eps, score, total_jobs
         for key in self.LOG_KEYS:
             self._data_log[key] = []
+
+        # gym_mode: when True (scheduler only), job arrival blocks until env provides action via _action_store
+        self._gym_mode = gym_mode and (node_type == Node.NodeType.SCHEDULER)
+        if self._gym_mode:
+            self._decision_required_event = simpy.Event(env)
+            self._action_store = simpy.Store(env, capacity=1)
+            self._pending_job = None
+            self._pending_state = None
+        else:
+            self._decision_required_event = None
+            self._action_store = None
+            self._pending_job = None
+            self._pending_state = None
 
         # to init later
         """Total number of nodes"""
@@ -732,8 +747,11 @@ class Node:
                     tt = actual_time(time_to_wait(job, self._net_speed_client_scheduler_mbits),
                                      self._distribution_network_forwarding_sigma)
                     yield self._env.timeout(tt)
-                    # execute the first decision when arrived
-                    self._job_first_dispatching(job)
+                    # execute the first decision when arrived (gym_mode: wait for env to provide action)
+                    if self._gym_mode:
+                        yield from self._job_first_dispatching_gym(job)
+                    else:
+                        self._job_first_dispatching(job)
 
                 elif next_action == Job.TransmissionAction.SCHEDULER_TO_WORKER:
                     # job is transmitted from the scheduler to the worker
@@ -1179,6 +1197,22 @@ class Node:
 
         # act
         self._act_execute(chosen_action, job)
+
+    def _job_first_dispatching_gym(self, job):
+        """Gym mode: store job/state, signal env, wait for action from store, then dispatch.
+        Generator so transmission process can yield until action is provided."""
+        state = self._get_state_representation(job)
+        self._pending_job = job
+        self._pending_state = state
+        self._decision_required_event.succeed()
+        action = yield self._action_store.get()
+        job.set_reward_batteries(self._get_reward_battery(action=action))
+        job.save_state_snapshot(state)
+        job.save_action(action, self._actions_space != Node.ActionsSpace.OTHER_CLUSTERS)
+        job.a_dispatched()
+        self._act_execute(action, job)
+        # next decision will signal on a fresh event
+        self._decision_required_event = simpy.Event(self._env)
 
     #
     # Core

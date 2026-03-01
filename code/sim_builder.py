@@ -39,6 +39,7 @@ def build_simulator(
     solar_panel_enabled: bool = False,
     solar_panel_spec_by_node_id: dict[int, object] | None = None,
     cloud_latency_roundtrip_ms: int = 20,
+    gym_mode: bool = False,
 ) -> tuple[simpy.Environment, list[Node], Cloud, ServiceDiscovery, ServiceDataStorage]:
     """
     Build the full simulator: SimPy env, Cloud, scheduler + 3 workers, discovery, data storage.
@@ -57,6 +58,7 @@ def build_simulator(
         solar_panel_enabled: Whether solar panel is enabled on nodes.
         solar_panel_spec_by_node_id: Optional dict node_id -> solar panel spec.
         cloud_latency_roundtrip_ms: Cloud roundtrip latency in ms.
+        gym_mode: If True, scheduler waits for external action via store (for Gym env).
 
     Returns:
         (env, nodes, cloud, discovery, data_storage). nodes[0] is the scheduler.
@@ -87,6 +89,7 @@ def build_simulator(
             die_after_seconds=get_die_after_seconds(0),
             solar_panel_enabled=solar_panel_enabled,
             solar_panel_spec=solar_panel_spec_by_node_id.get(0),
+            gym_mode=gym_mode,
         )
     )
     nodes.append(
@@ -179,6 +182,7 @@ def _create_scheduler_node(
     die_after_seconds: int = 0,
     solar_panel_enabled: bool = False,
     solar_panel_spec: object = None,
+    gym_mode: bool = False,
 ) -> Node:
     """Create scheduler node (node_id=0). Same kwargs as legacy create_node for scheduler."""
     return Node(
@@ -249,6 +253,7 @@ def _create_scheduler_node(
         logging_info=True,
         battery_total_capacity_wh=10,
         battery_initial_capacity_wh=10,
+        gym_mode=gym_mode,
     )
 
 
