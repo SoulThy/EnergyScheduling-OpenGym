@@ -31,17 +31,11 @@ import numpy as np
 
 # Local imports (adjust if code is run from project root or as package)
 try:
-    from code.cloud import Cloud
-    from code.config import WORKER_BATTERY_CAPACITIES
     from code.node import Node
-    from code.service_data_storage import ServiceDataStorage
-    from code.service_discovery import ServiceDiscovery
+    from code.sim_builder import build_simulator
 except ImportError:
-    from cloud import Cloud
-    from config import WORKER_BATTERY_CAPACITIES
     from node import Node
-    from service_data_storage import ServiceDataStorage
-    from service_discovery import ServiceDiscovery
+    from sim_builder import build_simulator
 
 
 # ---------------------------------------------------------------------------
@@ -173,168 +167,26 @@ class SchedulingEnv(gym.Env):
     def _build_simulator_components(self) -> None:
         """
         Create SimPy environment, scheduler Node, worker Nodes, Cloud, ServiceDiscovery,
-        and ServiceDataStorage. Reuse the same pattern as run_simulation_d_sarsa.
-
-        TODO: Extract a shared build_simulator(env, config) from run_simulation_d_sarsa
-        and call it here so legacy and Gym use identical setup.
+        and ServiceDataStorage via the shared build_simulator so legacy and Gym use identical setup.
         """
-        import simpy
-
         sim_time = self._kwargs.get("simulation_time", 10_000)
-        env = simpy.Environment()
-        cloud = Cloud(env, latency_roundtrip_ms=20)
-        worker_batt_1, worker_batt_2, worker_batt_3 = WORKER_BATTERY_CAPACITIES
-
-        nodes: list[Node] = []
-        nodes.append(self._create_scheduler_node(env, sim_time))
-        nodes.append(
-            self._create_worker_node(env, 1, worker_batt_1, sim_time)
+        env, nodes, cloud, discovery, data_storage = build_simulator(
+            sim_time=sim_time,
+            session_uid=self._session_id,
+            data_storage_session_id=self._session_id,
+            learning_type=Node.LearningType.NO_LEARNING,
+            no_learning_policy=Node.NoLearningPolicy.RANDOM,
+            actions_space=self._actions_space_type,
+            state_type=self._state_type,
+            reward_alpha=self._reward_alpha,
+            episode_length=self._episode_length,
         )
-        nodes.append(
-            self._create_worker_node(env, 2, worker_batt_2, sim_time)
-        )
-        nodes.append(
-            self._create_worker_node(env, 3, worker_batt_3, sim_time)
-        )
-
-        discovery = ServiceDiscovery(1, nodes, cloud)
-        data_storage = ServiceDataStorage(
-            nodes,
-            self._session_id,
-            Node.LearningType.NO_LEARNING,
-            Node.NoLearningPolicy.RANDOM,
-            self._actions_space_type,
-        )
-        for node in nodes:
-            node.set_service_discovery(discovery)
-            node.set_service_data_storage(data_storage)
-        for node in nodes:
-            node.init()
-        cloud.set_service_discovery(discovery)
-
         self._sim_env = env
         self._scheduler = nodes[0]
         self._nodes = nodes
         self._cloud = cloud
         self._discovery = discovery
         self._data_storage = data_storage
-
-    def _create_scheduler_node(
-        self,
-        env: Any,
-        sim_time: int,
-    ) -> Node:
-        """Create scheduler node (node_id=0). Mirror run_simulation_d_sarsa create_node()."""
-        return Node(
-            env,
-            0,
-            self._session_id,
-            simulation_time=sim_time,
-            skip_plots=True,
-            node_belong_to_cluster=0,
-            node_type=Node.NodeType.SCHEDULER,
-            die_after_seconds=0,
-            die_duration=4000,
-            machine_speed=1.0,
-            rate_l=30.0,
-            net_speed_client_scheduler_mbits=200,
-            net_speed_scheduler_scheduler_mbits=300,
-            net_speed_scheduler_worker_mbits=1000,
-            net_speed_scheduler_cloud_mbits=1000,
-            job_periodic_types=3,
-            job_periodic_payload_sizes_mbytes=(0.050, 0.050, 0.050),
-            job_periodic_duration_std_devs=(0.0003, 0.0003, 0.0003),
-            job_periodic_percentages=(0.33, 0.33, 0.34),
-            job_periodic_deadlines=(0.016, 0.033, 0.070),
-            job_periodic_durations=(0.010, 0.020, 0.055),
-            job_periodic_arrival_time_std_devs=(0.001, 0.002, 0.01),
-            job_periodic_rates_fps=(60, 30, 15),
-            job_periodic_desired_rates_fps=(60, 30, 15),
-            job_periodic_desired_rates_fps_max=(60, 30, 15),
-            job_periodic_desired_rates_fps_min=(50, 20, 10),
-            job_exponential_types=1,
-            job_exponential_payload_sizes_mbytes=[0.1],
-            job_exponential_duration_std_devs=[0.01],
-            job_exponential_arrival_time_std_devs=[0.01],
-            job_exponential_percentages=[1],
-            job_exponential_deadlines=[0.300],
-            job_exponential_durations=[0.100],
-            job_exponential_rates_fps=[10],
-            job_exponential_desired_rates_fps=[1],
-            job_exponential_desired_rates_fps_min=[0],
-            job_exponential_desired_rates_fps_max=[10],
-            max_jobs_in_queue=5,
-            distribution_arrivals=Node.DistributionArrivals.POISSON,
-            delay_probing=0.003,
-            state_type=self._state_type,
-            learning_type=Node.LearningType.NO_LEARNING,
-            no_learning_policy=Node.NoLearningPolicy.RANDOM,
-            actions_space=self._actions_space_type,
-            reward_alpha=self._reward_alpha,
-            episode_length=self._episode_length,
-            battery_total_capacity_wh=10,
-            battery_initial_capacity_wh=10,
-        )
-
-    def _create_worker_node(
-        self,
-        env: Any,
-        node_id: int,
-        batt: int,
-        sim_time: int,
-    ) -> Node:
-        """Create worker node. Mirror run_simulation_d_sarsa create_node() for workers."""
-        speed = {1: 1.8, 2: 1.7, 3: 1.4}.get(node_id, 1.0)
-        return Node(
-            env,
-            node_id,
-            self._session_id,
-            simulation_time=sim_time,
-            skip_plots=True,
-            node_belong_to_cluster=0,
-            node_type=Node.NodeType.WORKER,
-            die_after_seconds=0,
-            die_duration=4000,
-            machine_speed=speed,
-            rate_l=30.0,
-            net_speed_client_scheduler_mbits=200,
-            net_speed_scheduler_scheduler_mbits=300,
-            net_speed_scheduler_worker_mbits=1000,
-            net_speed_scheduler_cloud_mbits=1000,
-            job_periodic_types=3,
-            job_periodic_payload_sizes_mbytes=(0.050, 0.050, 0.050),
-            job_periodic_duration_std_devs=(0.0003, 0.0003, 0.0003),
-            job_periodic_percentages=(0.33, 0.33, 0.34),
-            job_periodic_deadlines=(0.016, 0.033, 0.070),
-            job_periodic_durations=(0.010, 0.020, 0.055),
-            job_periodic_arrival_time_std_devs=(0.001, 0.002, 0.01),
-            job_periodic_rates_fps=(60, 30, 15),
-            job_periodic_desired_rates_fps=(60, 30, 15),
-            job_periodic_desired_rates_fps_max=(60, 30, 15),
-            job_periodic_desired_rates_fps_min=(50, 20, 10),
-            job_exponential_types=1,
-            job_exponential_payload_sizes_mbytes=[0.1],
-            job_exponential_duration_std_devs=[0.01],
-            job_exponential_arrival_time_std_devs=[0.01],
-            job_exponential_percentages=[1],
-            job_exponential_deadlines=[0.300],
-            job_exponential_durations=[0.100],
-            job_exponential_rates_fps=[10],
-            job_exponential_desired_rates_fps=[1],
-            job_exponential_desired_rates_fps_min=[0],
-            job_exponential_desired_rates_fps_max=[10],
-            max_jobs_in_queue=5,
-            distribution_arrivals=Node.DistributionArrivals.POISSON,
-            delay_probing=0.003,
-            state_type=self._state_type,
-            learning_type=Node.LearningType.NO_LEARNING,
-            no_learning_policy=Node.NoLearningPolicy.RANDOM,
-            actions_space=self._actions_space_type,
-            reward_alpha=self._reward_alpha,
-            episode_length=self._episode_length,
-            battery_total_capacity_wh=batt,
-            battery_initial_capacity_wh=batt,
-        )
 
     def _get_reference_observation(self) -> list[int]:
         """Obtain one state vector to infer observation shape. Uses current scheduler state.
