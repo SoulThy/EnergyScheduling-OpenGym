@@ -24,6 +24,7 @@ Usage (once implemented):
 
 from __future__ import annotations
 
+import random
 from typing import Any
 
 import gymnasium as gym
@@ -244,8 +245,8 @@ class SchedulingEnv(gym.Env):
         """
         super().reset(seed=seed)
         if seed is not None:
-            # Reseed simulator RNGs if needed (e.g. random.seed(seed))
-            pass
+            random.seed(seed)
+            np.random.seed(seed)
         self._step_count = 0
         # TODO: Rebuild or reset simulator; advance until first decision point; set self._current_job.
         self._build_simulator_components()
