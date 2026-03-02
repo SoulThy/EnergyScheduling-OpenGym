@@ -1205,14 +1205,16 @@ class Node:
         self._pending_job = job
         self._pending_state = state
         self._decision_required_event.succeed()
+
+        # next decision will signal on a fresh event
+        self._decision_required_event = simpy.Event(self._env)
+
         action = yield self._action_store.get()
         job.set_reward_batteries(self._get_reward_battery(action=action))
         job.save_state_snapshot(state)
         job.save_action(action, self._actions_space != Node.ActionsSpace.OTHER_CLUSTERS)
         job.a_dispatched()
         self._act_execute(action, job)
-        # next decision will signal on a fresh event
-        self._decision_required_event = simpy.Event(self._env)
 
     #
     # Core
