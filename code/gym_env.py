@@ -147,6 +147,9 @@ class SchedulingEnv(gym.Env):
         self._scheduler: Node | None = None
         self._current_job: Any = None
         self._step_count = 0
+        # Track which jobs have already had their reward emitted so we don't double-count
+        # when multiple jobs complete between decision points.
+        self._rewarded_job_ids: set[int] = set()
 
         self._build_simulator_components()
 
@@ -249,10 +252,23 @@ class SchedulingEnv(gym.Env):
             random.seed(seed)
             np.random.seed(seed)
         self._step_count = 0
-        # TODO: Rebuild or reset simulator; advance until first decision point; set self._current_job.
+        self._rewarded_job_ids.clear()
         self._build_simulator_components()
-        # Placeholder: we have no job yet because we did not run the sim. Return zero obs.
-        obs = np.zeros(self._obs_dim, dtype=np.float32)
+
+        # Advance simulator until the first decision point: a job arrives at the scheduler
+        # and _job_first_dispatching_gym() signals that a decision is required.
+        if self._scheduler is None or self._sim_env is None:
+            raise RuntimeError("Simulator not initialized correctly in reset().")
+
+        # Use the common helper to advance until the next decision point and retrieve the job.
+        self._current_job = self._advance_until_next_decision_point()
+        if self._current_job is None:
+            # No job ever arrived; return a zero observation and mark as truncated episode.
+            obs = np.zeros(self._obs_dim, dtype=np.float32)
+            info: dict[str, Any] = {"warning": "No job arrived before simulation stopped."}
+            return obs, info
+
+        obs = self._extract_observation(self._current_job)
         info: dict[str, Any] = {}
         return obs, info
 
@@ -293,17 +309,89 @@ class SchedulingEnv(gym.Env):
         12. self._step_count += 1; self._current_job = next_job
         13. return next_obs, reward, terminated, truncated, info
         """
-        self._step_count += 1
-        # Placeholder returns (no real stepping yet).
-        obs = np.zeros(self._obs_dim, dtype=np.float32)
+        if self._scheduler is None or self._sim_env is None:
+            raise RuntimeError("Simulator not initialized. Call reset() before step().")
+
+        if not isinstance(action, (int, np.integer)):
+            raise TypeError(f"Action must be an int, got {type(action)}")
+        action = int(action)
+        if action < 0 or action >= self._action_dim:
+            raise ValueError(f"Action {action} out of bounds for action space size {self._action_dim}")
+
+        if self._current_job is None:
+            raise RuntimeError("No current job set. Did you forget to call reset()?")
+
+        # Optionally, you could validate against possible actions:
+        # state_list = self._scheduler._pending_state
+        # possible_actions = self._scheduler._get_possible_actions(current_job, state_list)
+        # if action not in possible_actions: ...
+
+        # Schedule a tiny SimPy process that simply puts the action into the scheduler's store.
+        def _put_action(env, store, value):
+            yield store.put(value)
+
+        if self._scheduler._action_store is None:
+            raise RuntimeError("Scheduler action store is None; gym_mode might be disabled.")
+
+        self._sim_env.process(_put_action(self._sim_env, self._scheduler._action_store, action))
+
+        # Advance simulator until the next decision point (next job arrival requiring a decision),
+        # or until the simulation naturally ends.
+        next_job = self._advance_until_next_decision_point()
+
+        # Delayed reward: sum rewards for any jobs that finished since the last decision
+        # and have not yet contributed to the return. This preserves concurrency: multiple
+        # jobs can be in flight, and each contributes its reward exactly once when done.
         reward = 0.0
+        scheduled_jobs = getattr(self._scheduler, "_scheduled_jobs", [])
+        for job in scheduled_jobs:
+            try:
+                if job.is_done() and job.get_uid() not in self._rewarded_job_ids:
+                    # Node stores the chosen action on the job; use it for reward_battery.
+                    job_action = job.get_action(0)
+                    reward += self._compute_reward(job, job_action)
+                    self._rewarded_job_ids.add(job.get_uid())
+            except Exception:
+                # Be robust against any unexpected job object issues.
+                continue
+
+        # Determine termination and truncation.
         terminated = False
-        truncated = (
+        truncated = False
+
+        # Time-based truncation.
+        if self._sim_time_limit is not None and self._sim_env.now >= self._sim_time_limit:
+            truncated = True
+
+        # Step-count-based truncation.
+        if (
             self._max_steps_per_episode is not None
-            and self._step_count >= self._max_steps_per_episode
-        )
+            and self._step_count + 1 >= self._max_steps_per_episode
+        ):
+            truncated = True
+
+        # Episode termination: mirror legacy notion that an episode is a fixed number of
+        # jobs. We terminate once we have emitted rewards for `episode_length` jobs.
+        # This ensures the per-episode return in Gym matches the total reward of the
+        # first `episode_length` jobs, similar to how Node groups jobs into episodes.
+        if len(self._rewarded_job_ids) >= self._episode_length:
+            terminated = True
+
+        # Build next observation.
+        if next_job is not None and not (terminated or truncated):
+            next_obs = self._extract_observation(next_job)
+        else:
+            # Terminal observation; by convention, return zeros.
+            next_obs = np.zeros(self._obs_dim, dtype=np.float32)
+
+        # Build info dict; optionally include aggregate info on completed jobs.
         info: dict[str, Any] = {}
-        return obs, reward, terminated, truncated, info
+
+        # Update internal counters and current job.
+        self._step_count += 1
+        self._current_job = next_job
+
+        return next_obs, float(reward), bool(terminated), bool(truncated), info
 
     def _advance_until_next_decision_point(self) -> Any:
         """
@@ -321,10 +409,12 @@ class SchedulingEnv(gym.Env):
         time steps and check after each whether the scheduler has a pending job (e.g. a
         new attribute Node._pending_job_for_gym set by _job_first_dispatching in Gym mode).
         """
-        raise NotImplementedError(
-            "Advancing to next decision point requires Node to support Gym mode (pause at "
-            "job arrival instead of calling _act)."
-        )
+        if self._scheduler is None or self._sim_env is None:
+            raise RuntimeError("Simulator not initialized.")
+
+        # Run until the scheduler signals that a new decision is required.
+        self._sim_env.run(until=self._scheduler._decision_required_event)
+        return self._scheduler._pending_job
 
     def _extract_observation(self, job: Any) -> np.ndarray:
         """
