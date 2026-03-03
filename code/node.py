@@ -85,10 +85,10 @@ class Node:
         OTHER_CLUSTERS = 2  # total actions: number of nodes + 1 + n_clusters
 
     class LearningType(Enum):
-        NO_LEARNING = 0
-        Q_DNN = 1
-        Q_TABLE = 2
-        D_SARSA = 3
+        NO_LEARNING = 0      # internal heuristic policies (RANDOM, ROUND_ROBIN, etc.) or external driver (e.g. Gym)
+        Q_DNN = 1            # internal deep Q-learning (not implemented yet)
+        Q_TABLE = 2          # internal tabular Q-learning (not implemented yet)
+        D_SARSA = 3          # internal differential semi-gradient Sarsa
 
     class NoLearningPolicy(Enum):
         RANDOM = 0
@@ -1220,7 +1220,7 @@ class Node:
     # Core
     #
 
-    def _act(self, state, job: Job) -> int or None:
+    def _act(self, state, job: Job) -> int | None:
         action = None
         if self._session_learning_type == Node.LearningType.NO_LEARNING:
             action = self._act_no_learning(state, job)
