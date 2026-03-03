@@ -38,6 +38,8 @@ LEARNING_TYPE = Node.LearningType.D_SARSA
 NO_LEARNING_POLICY = Node.NoLearningPolicy.RANDOM
 ACTIONS_SPACE = Node.ActionsSpace.WORKERS_OR_CLOUD
 
+# Step size for sweeping alpha from 0.00 to 1.00 (inclusive).
+ALPHA_INCREMENT = 0.05
 # Define a function to run the simulation for a given alpha
 def run_simulation(alpha):
     session_id = f'{SESSION_ID}_{alpha:.2f}_FAILURE'
@@ -229,7 +231,9 @@ if __name__ == "__main__":
     num_cores = MAX_PARALLEL_SIMULATIONS
 
     # Calculate the range of alphas to cover
-    alpha_values = [1.0,0.0] 
+    steps = int(round(1.0 / ALPHA_INCREMENT))
+    #alpha_values = [0.00,1.00]
+    alpha_values = [round(i * ALPHA_INCREMENT, 2) for i in range(steps + 1)]
     
     # Launch processes
     processes = []
