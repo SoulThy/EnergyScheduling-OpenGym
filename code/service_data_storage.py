@@ -132,7 +132,13 @@ class ServiceDataStorage:
         Log.minfo(MODULE, "Copying memory db to file, please wait")
         start = time.time()
 
-        new_db = sqlite3.connect(f"{self._log_dir}/log.db")
+        db_path = f"{self._log_dir}/log.db"
+        # Overwrite any existing log.db from previous runs so that the full
+        # in-memory schema can be recreated without table-name conflicts.
+        if os.path.exists(db_path):
+            os.remove(db_path)
+
+        new_db = sqlite3.connect(db_path)
         query = "".join(line for line in self._db.iterdump())
 
         # Dump old database in the new one.

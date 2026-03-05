@@ -232,7 +232,8 @@ if __name__ == "__main__":
     num_cores = MAX_PARALLEL_SIMULATIONS
 
     # Calculate the range of alphas to cover
-    alpha_values = [1.0]
+    steps = int(round(1.0 / ALPHA_INCREMENT))
+    alpha_values = [round(i * ALPHA_INCREMENT, 2) for i in range(steps + 1)]
     
     # Launch processes
     processes = []

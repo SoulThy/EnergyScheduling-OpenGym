@@ -85,10 +85,10 @@ class Node:
         OTHER_CLUSTERS = 2  # total actions: number of nodes + 1 + n_clusters
 
     class LearningType(Enum):
-        NO_LEARNING = 0
-        Q_DNN = 1
-        Q_TABLE = 2
-        D_SARSA = 3
+        NO_LEARNING = 0      # internal heuristic policies (RANDOM, ROUND_ROBIN, etc.) or external driver (e.g. Gym)
+        Q_DNN = 1            # internal deep Q-learning (not implemented yet)
+        Q_TABLE = 2          # internal tabular Q-learning (not implemented yet)
+        D_SARSA = 3          # internal differential semi-gradient Sarsa
 
     class NoLearningPolicy(Enum):
         RANDOM = 0
@@ -219,7 +219,9 @@ class Node:
                  pwr2_threshold=3,
                  pwr2_binary_policy=None,  # express like '11111',
                  # utils
-                 logging_info=True
+                 logging_info=True,
+                 # gym wrapper: when True, scheduler does not choose action; waits for env to put action in store
+                 gym_mode=False,
                  ):
 
         #
@@ -415,6 +417,23 @@ class Node:
         self._data_log = {}  # episode, eps, score, total_jobs
         for key in self.LOG_KEYS:
             self._data_log[key] = []
+
+        # gym_mode: when True (scheduler only), job arrival blocks until env provides action via _action_store
+        self._gym_mode = gym_mode and (node_type == Node.NodeType.SCHEDULER)
+        if self._gym_mode:
+            self._decision_required_event = simpy.Event(env)
+            self._action_store = simpy.Store(env, capacity=1)
+            self._pending_job = None
+            self._pending_state = None
+            # Jobs that have completed (returned to client) since the last
+            # Gym decision; used by the Gym wrapper to compute rewards
+            # without scanning the full _scheduled_jobs backlog.
+            self._gym_completed_jobs: List[Job] = []
+        else:
+            self._decision_required_event = None
+            self._action_store = None
+            self._pending_job = None
+            self._pending_state = None
 
         # to init later
         """Total number of nodes"""
@@ -732,8 +751,11 @@ class Node:
                     tt = actual_time(time_to_wait(job, self._net_speed_client_scheduler_mbits),
                                      self._distribution_network_forwarding_sigma)
                     yield self._env.timeout(tt)
-                    # execute the first decision when arrived
-                    self._job_first_dispatching(job)
+                    # execute the first decision when arrived (gym_mode: wait for env to provide action)
+                    if self._gym_mode:
+                        yield from self._job_first_dispatching_gym(job)
+                    else:
+                        self._job_first_dispatching(job)
 
                 elif next_action == Job.TransmissionAction.SCHEDULER_TO_WORKER:
                     # job is transmitted from the scheduler to the worker
@@ -906,8 +928,11 @@ class Node:
                                f"_process_jobs_generator: generated j={job}, now={self._env.now}, "
                                f"episode={self._current_episode_number}, rate_l={rate_l}, job_type_id={job_type_id}")
 
-                # append the job to the backlog list
-                self._scheduled_jobs.append(job)
+                # append the job to the backlog list for internal learning and
+                # legacy NO_LEARNING logging only. Gym-driven NO_LEARNING runs
+                # track completed jobs separately via _gym_completed_jobs.
+                if not self._gym_mode:
+                    self._scheduled_jobs.append(job)
 
                 # check if episode ended
                 episode_end = (self._total_jobs - self._last_episode_end_at) % self._episode_length == 0
@@ -1180,11 +1205,29 @@ class Node:
         # act
         self._act_execute(chosen_action, job)
 
+    def _job_first_dispatching_gym(self, job):
+        """Gym mode: store job/state, signal env, wait for action from store, then dispatch.
+        Generator so transmission process can yield until action is provided."""
+        state = self._get_state_representation(job)
+        self._pending_job = job
+        self._pending_state = state
+        self._decision_required_event.succeed()
+
+        # next decision will signal on a fresh event
+        self._decision_required_event = simpy.Event(self._env)
+
+        action = yield self._action_store.get()
+        job.set_reward_batteries(self._get_reward_battery(action=action))
+        job.save_state_snapshot(state)
+        job.save_action(action, self._actions_space != Node.ActionsSpace.OTHER_CLUSTERS)
+        job.a_dispatched()
+        self._act_execute(action, job)
+
     #
     # Core
     #
 
-    def _act(self, state, job: Job) -> int or None:
+    def _act(self, state, job: Job) -> int | None:
         action = None
         if self._session_learning_type == Node.LearningType.NO_LEARNING:
             action = self._act_no_learning(state, job)
@@ -1676,8 +1719,17 @@ class Node:
             pass
         elif self._session_learning_type == Node.LearningType.D_SARSA:
             self._d_sarsa_learn_episode(alpha=self._reward_alpha)
-        else:
-            self._no_learning_log_episode()
+        elif self._session_learning_type == Node.LearningType.NO_LEARNING:
+            # In NO_LEARNING mode, the node can either:
+            # - run its internal heuristic policies and logging, or
+            # - act as a pure backend driven by an external controller (e.g. Gym).
+            if self._gym_mode:
+                # For Gym runs, push the completed job to a small queue so the
+                # Gym wrapper can compute rewards efficiently without scanning
+                # the entire _scheduled_jobs backlog.
+                self._gym_completed_jobs.append(job)
+            else:
+                self._no_learning_log_episode()
 
     #
     # Utils
