@@ -222,27 +222,16 @@ class SchedulingEnv(gym.Env):
         options: dict[str, Any] | None = None,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         """
-        Reset the environment for a new episode.
+        Reset the environment for a new logical episode.
 
-        We advance only until the first job arrives at the scheduler (first decision point),
-        not the full episode. One episode = episode_length jobs (e.g. 60); each will get one step().
+        The underlying SimPy simulator is not recreated; instead, we keep the same
+        continuous-time simulation and simply advance until the next decision point:
+        a job arrival at the scheduler in Gym mode, signalled by
+        `Node._job_first_dispatching_gym` via `_decision_required_event`. If a seed
+        is provided, Python's and NumPy's RNGs are reseeded before advancing.
 
-        Gymnasium standard: (obs, info).
-
-        Implementation steps (to complete):
-        1. If seed is not None, call self.np_random = np.random.default_rng(seed) and
-           reseed any simulator RNGs (e.g. random.seed(seed)).
-        2. Rebuild or thoroughly reset the SimPy environment and all nodes so episodes
-           are independent (e.g. call _build_simulator_components() again, or add a
-           reset hook on Node/ServiceDataStorage).
-        3. Start job generation and run the SimPy environment until the first decision
-           point (first job arrival at the scheduler). This requires the simulator to
-           support "Gym mode" so that at arrival we do not call Node._act() but instead
-           expose the job for the env (e.g. store in self._current_job and trigger an
-           event the env waits on).
-        4. obs = self._extract_observation(self._current_job)
-        5. info = {} (optionally add action_mask from Node._get_possible_actions(job, state))
-        6. return obs, info
+        Returns the observation for the pending job at the scheduler and an info
+        dict (currently empty for the dummy/random agent use case).
         """
         super().reset(seed=seed)
         # For long-horizon experiments that mirror the legacy simulator, we
@@ -277,37 +266,19 @@ class SchedulingEnv(gym.Env):
         action: int,
     ) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
         """
-        Execute one step (Option A): apply action, run sim until NEXT job arrives at scheduler.
+        Execute one step under Option A (concurrent jobs).
 
-        We do NOT wait for the job we just dispatched to complete. Advance until the next
-        decision point (next job arrival). Reward is delayed: return reward for the job we
-        dispatched THIS step only if it completed before the next arrival, else 0. Track
-        (last_dispatched_job, last_action) to compute this.
+        The discrete `action` is pushed into the scheduler's `_action_store`. The
+        SimPy environment is then advanced until the next decision point, i.e. the
+        next job arrival at the scheduler in Gym mode, as signalled by
+        `_decision_required_event`. Any jobs that complete in this interval are
+        queued by the scheduler in `_gym_completed_jobs`; their combined reward is
+        computed via `_compute_reward` and returned as the step reward.
 
-        Gymnasium standard: (obs, reward, terminated, truncated, info).
-
-        Implementation steps (to complete):
-        1. Validate 0 <= action < self._action_dim (raise or clip per project policy).
-        2. current_job = self._current_job (must be set by reset / previous step).
-        3. state = self._scheduler._get_state_representation(current_job)
-        4. Prepare job for execution (same as Node._job_first_dispatching):
-           - self._scheduler._get_reward_battery(action) -> pass to job.set_reward_batteries(...)
-           - current_job.save_state_snapshot(state)
-           - current_job.save_action(action, ...)
-           - current_job.a_dispatched()
-        5. self._scheduler._act_execute(action, current_job)  # do NOT call _act()
-        6. Advance SimPy until the NEXT job arrives at the scheduler (next decision point),
-           or episode ends. Use _advance_until_next_decision_point(). Do NOT wait for
-           current_job to complete; other jobs may be dispatched by the sim during this.
-        7. Delayed reward: reward = _compute_reward(current_job, action) if current_job.is_done()
-           else 0.0 (job may complete in a later step; algorithms can use n-step/episode returns).
-        8. terminated = (next job is last of episode) or _is_episode_over(next_job, next_state)
-        9. truncated = (self._sim_time_limit and sim_env.now >= self._sim_time_limit) or
-                       (self._max_steps_per_episode and self._step_count >= self._max_steps_per_episode)
-        10. next_obs = self._extract_observation(next_job) if next job else zero/terminal obs
-        11. info = {"success": job.is_succeed() if job.is_done() else None, ...} (optional)
-        12. self._step_count += 1; self._current_job = next_job
-        13. return next_obs, reward, terminated, truncated, info
+        Episodes are typically managed by the outer training loop (e.g. one logical
+        episode every `episode_length` decisions), so `terminated` is always False
+        and `truncated` is driven solely by `sim_time_limit` and
+        `max_steps_per_episode`.
         """
         if self._scheduler is None or self._sim_env is None:
             raise RuntimeError("Simulator not initialized. Call reset() before step().")
