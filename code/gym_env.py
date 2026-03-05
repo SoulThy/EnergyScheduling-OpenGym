@@ -190,48 +190,6 @@ class SchedulingEnv(gym.Env):
         self._discovery = discovery
         self._data_storage = data_storage
 
-    def _rebuild_simulator_env_reusing_storage(self) -> None:
-        """
-        Rebuild SimPy environment, Nodes, Cloud, and ServiceDiscovery, but keep
-        using the same ServiceDataStorage instance so that all Gym episodes in
-        a run append to a single log.db (matching legacy behaviour).
-        """
-        sim_time = self._kwargs.get("simulation_time", 10_000)
-        # Build a fresh simulator; we will discard the newly created
-        # ServiceDataStorage instance and instead reattach the existing one.
-        env, nodes, cloud, discovery, _ = build_simulator(
-            sim_time=sim_time,
-            session_uid=self._session_id,
-            data_storage_session_id=self._session_id,
-            learning_type=Node.LearningType.NO_LEARNING,
-            no_learning_policy=Node.NoLearningPolicy.RANDOM,
-            actions_space=self._actions_space_type,
-            state_type=self._state_type,
-            reward_alpha=self._reward_alpha,
-            episode_length=self._episode_length,
-            gym_mode=True,
-        )
-
-        self._sim_env = env
-        self._scheduler = nodes[0]
-        self._nodes = nodes
-        self._cloud = cloud
-        self._discovery = discovery
-
-        # Reattach the shared data storage so that jobs/episodes from all Gym
-        # episodes are written into the same in-memory DB and single log.db.
-        if self._data_storage is not None:
-            try:
-                # Update internal node list and counters for reporting.
-                self._data_storage._nodes = nodes  # type: ignore[attr-defined]
-                self._data_storage._n_nodes = len(nodes)  # type: ignore[attr-defined]
-            except Exception:
-                # Best-effort; these are used mainly for model saving / meta stats.
-                pass
-
-            for node in nodes:
-                node.set_service_data_storage(self._data_storage)
-
     def _get_reference_observation(self) -> list[int]:
         """Obtain one state vector to infer observation shape. Uses current scheduler state.
 
