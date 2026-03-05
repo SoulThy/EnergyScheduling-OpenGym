@@ -8,7 +8,6 @@ from __future__ import annotations
 import random
 from typing import List
 
-# from node import Node
 from log import Log
 from node import Node
 

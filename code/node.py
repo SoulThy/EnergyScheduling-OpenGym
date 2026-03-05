@@ -425,6 +425,10 @@ class Node:
             self._action_store = simpy.Store(env, capacity=1)
             self._pending_job = None
             self._pending_state = None
+            # Jobs that have completed (returned to client) since the last
+            # Gym decision; used by the Gym wrapper to compute rewards
+            # without scanning the full _scheduled_jobs backlog.
+            self._gym_completed_jobs: List[Job] = []
         else:
             self._decision_required_event = None
             self._action_store = None
@@ -924,8 +928,11 @@ class Node:
                                f"_process_jobs_generator: generated j={job}, now={self._env.now}, "
                                f"episode={self._current_episode_number}, rate_l={rate_l}, job_type_id={job_type_id}")
 
-                # append the job to the backlog list
-                self._scheduled_jobs.append(job)
+                # append the job to the backlog list for internal learning and
+                # legacy NO_LEARNING logging only. Gym-driven NO_LEARNING runs
+                # track completed jobs separately via _gym_completed_jobs.
+                if not self._gym_mode:
+                    self._scheduled_jobs.append(job)
 
                 # check if episode ended
                 episode_end = (self._total_jobs - self._last_episode_end_at) % self._episode_length == 0
@@ -1712,8 +1719,17 @@ class Node:
             pass
         elif self._session_learning_type == Node.LearningType.D_SARSA:
             self._d_sarsa_learn_episode(alpha=self._reward_alpha)
-        else:
-            self._no_learning_log_episode()
+        elif self._session_learning_type == Node.LearningType.NO_LEARNING:
+            # In NO_LEARNING mode, the node can either:
+            # - run its internal heuristic policies and logging, or
+            # - act as a pure backend driven by an external controller (e.g. Gym).
+            if self._gym_mode:
+                # For Gym runs, push the completed job to a small queue so the
+                # Gym wrapper can compute rewards efficiently without scanning
+                # the entire _scheduled_jobs backlog.
+                self._gym_completed_jobs.append(job)
+            else:
+                self._no_learning_log_episode()
 
     #
     # Utils

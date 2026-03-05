@@ -30,6 +30,8 @@ from typing import Any
 import gymnasium as gym
 import numpy as np
 
+from log import Log
+
 # Local imports (adjust if code is run from project root or as package)
 try:
     from code.node import Node
@@ -70,7 +72,7 @@ except ImportError:
 #   - ServiceDataStorage(nodes, session_id, ...)
 #   - node.set_service_discovery(discovery); node.set_service_data_storage(data_storage); node.init()
 #
-# **Option A — match real-world concurrency** (likely requires Node change):
+# **Option A — match real-world concurrency**:
 #   - One Gym step = one job ARRIVAL at the scheduler (one decision). We do NOT wait for the
 #     job we dispatched to complete before processing the next arrival; we advance sim until
 #     the NEXT job arrives at the scheduler (next decision point). Multiple jobs can be in
@@ -80,11 +82,10 @@ except ImportError:
 #     obs = _get_state_representation(job). When step(action) is called: set_reward_batteries,
 #     save_state_snapshot, save_action, a_dispatched(), _act_execute(action, job), then run
 #     sim until the NEXT job arrives at the scheduler (not until current job completes).
-#   - **Delayed rewards**: reward at step t is for the job we dispatched at step t only if
-#     that job completed before the next job arrived; else reward = 0. So we track the
-#     last dispatched (job, action) and when we reach the next arrival, check job.is_done()
-#     and set reward accordingly. Algorithms may use n-step or episode returns to handle
-#     delayed feedback.
+#   - **Delayed rewards**: rewards are emitted only when jobs complete. The Node
+#     backend queues completed jobs in a small `_gym_completed_jobs` list; each
+#     Env step aggregates the combined reward for all jobs that finished since
+#     the last decision, ensuring each completed job contributes exactly once.
 # **Original D-SARSA vs Gym**: In the original code, D-SARSA takes one action per job (same
 #   as Option A), but learning (weight updates) happens only after the full batch of
 #   episode_length jobs completes (_can_replay_start, _d_sarsa_learn_episode). The Gym env
@@ -147,10 +148,6 @@ class SchedulingEnv(gym.Env):
         self._scheduler: Node | None = None
         self._current_job: Any = None
         self._step_count = 0
-        # Track which jobs have already had their reward emitted so we don't double-count
-        # when multiple jobs complete between decision points.
-        self._rewarded_job_ids: set[int] = set()
-
         self._build_simulator_components()
 
         # Observation: same as Node._get_state_representation(job) -> list of ints; cast to float32.
@@ -192,6 +189,48 @@ class SchedulingEnv(gym.Env):
         self._cloud = cloud
         self._discovery = discovery
         self._data_storage = data_storage
+
+    def _rebuild_simulator_env_reusing_storage(self) -> None:
+        """
+        Rebuild SimPy environment, Nodes, Cloud, and ServiceDiscovery, but keep
+        using the same ServiceDataStorage instance so that all Gym episodes in
+        a run append to a single log.db (matching legacy behaviour).
+        """
+        sim_time = self._kwargs.get("simulation_time", 10_000)
+        # Build a fresh simulator; we will discard the newly created
+        # ServiceDataStorage instance and instead reattach the existing one.
+        env, nodes, cloud, discovery, _ = build_simulator(
+            sim_time=sim_time,
+            session_uid=self._session_id,
+            data_storage_session_id=self._session_id,
+            learning_type=Node.LearningType.NO_LEARNING,
+            no_learning_policy=Node.NoLearningPolicy.RANDOM,
+            actions_space=self._actions_space_type,
+            state_type=self._state_type,
+            reward_alpha=self._reward_alpha,
+            episode_length=self._episode_length,
+            gym_mode=True,
+        )
+
+        self._sim_env = env
+        self._scheduler = nodes[0]
+        self._nodes = nodes
+        self._cloud = cloud
+        self._discovery = discovery
+
+        # Reattach the shared data storage so that jobs/episodes from all Gym
+        # episodes are written into the same in-memory DB and single log.db.
+        if self._data_storage is not None:
+            try:
+                # Update internal node list and counters for reporting.
+                self._data_storage._nodes = nodes  # type: ignore[attr-defined]
+                self._data_storage._n_nodes = len(nodes)  # type: ignore[attr-defined]
+            except Exception:
+                # Best-effort; these are used mainly for model saving / meta stats.
+                pass
+
+            for node in nodes:
+                node.set_service_data_storage(self._data_storage)
 
     def _get_reference_observation(self) -> list[int]:
         """Obtain one state vector to infer observation shape. Uses current scheduler state.
@@ -248,12 +287,15 @@ class SchedulingEnv(gym.Env):
         6. return obs, info
         """
         super().reset(seed=seed)
+        # For long-horizon experiments that mirror the legacy simulator, we
+        # keep a single SimPy environment and continuous time. reset() only
+        # resets Gym-side bookkeeping and advances to the next decision point;
+        # it does NOT rebuild or rewind the underlying simulator.
         if seed is not None:
             random.seed(seed)
             np.random.seed(seed)
+
         self._step_count = 0
-        self._rewarded_job_ids.clear()
-        self._build_simulator_components()
 
         # Advance simulator until the first decision point: a job arrives at the scheduler
         # and _job_first_dispatching_gym() signals that a decision is required.
@@ -339,20 +381,17 @@ class SchedulingEnv(gym.Env):
         # or until the simulation naturally ends.
         next_job = self._advance_until_next_decision_point()
 
-        # Delayed reward: sum rewards for any jobs that finished since the last decision
-        # and have not yet contributed to the return. This preserves concurrency: multiple
-        # jobs can be in flight, and each contributes its reward exactly once when done.
+        # Delayed reward: sum rewards for any jobs that finished since the last
+        # decision, as queued by Node in _gym_completed_jobs. This preserves
+        # concurrency while avoiding scanning the full _scheduled_jobs backlog.
         reward = 0.0
-        scheduled_jobs = getattr(self._scheduler, "_scheduled_jobs", [])
-        for job in scheduled_jobs:
+        completed_jobs = getattr(self._scheduler, "_gym_completed_jobs", [])
+        while completed_jobs:
+            job = completed_jobs.pop(0)
             try:
-                if job.is_done() and job.get_uid() not in self._rewarded_job_ids:
-                    # Node stores the chosen action on the job; use it for reward_battery.
-                    job_action = job.get_action(0)
-                    reward += self._compute_reward(job, job_action)
-                    self._rewarded_job_ids.add(job.get_uid())
+                job_action = job.get_action(0)
+                reward += self._compute_reward(job, job_action)
             except Exception:
-                # Be robust against any unexpected job object issues.
                 continue
 
         # Determine termination and truncation.
@@ -369,13 +408,6 @@ class SchedulingEnv(gym.Env):
             and self._step_count + 1 >= self._max_steps_per_episode
         ):
             truncated = True
-
-        # Episode termination: mirror legacy notion that an episode is a fixed number of
-        # jobs. We terminate once we have emitted rewards for `episode_length` jobs.
-        # This ensures the per-episode return in Gym matches the total reward of the
-        # first `episode_length` jobs, similar to how Node groups jobs into episodes.
-        if len(self._rewarded_job_ids) >= self._episode_length:
-            terminated = True
 
         # Build next observation.
         if next_job is not None and not (terminated or truncated):
@@ -445,4 +477,82 @@ class SchedulingEnv(gym.Env):
         return (
             self._reward_alpha * reward_fps
             + (1.0 - self._reward_alpha) * reward_battery
+        )
+
+    # ------------------------------------------------------------------
+    # Episode-level logging helper for Gym-based agents
+    # ------------------------------------------------------------------
+
+    def log_episode_summary(
+        self,
+        *,
+        node_uid: int,
+        episode: int,
+        eps: float,
+        score: float,
+        jobs: int,
+        average_reward: float,
+        processed_jobs: int,
+        generated_jobs: int,
+        cur_episode: int,
+        diff_episode: int,
+        now: float,
+        elapsed: float,
+        loss: float = 0.0,
+        mse: float = 0.0,
+        mae: float = 0.0,
+    ) -> None:
+        """
+        Log an episode summary for a Gym-based agent using the same structure
+        as the legacy D-SARSA implementation, and persist the episode into the
+        shared ServiceDataStorage.
+
+        This is intended to be called from an external training loop, e.g.:
+
+            env = SchedulingEnv(...)
+            ...
+            env.log_episode_summary(
+                node_uid=0,
+                episode=ep,
+                eps=current_eps,
+                score=episode_return,
+                jobs=env._episode_length,
+                average_reward=episode_return / env._episode_length,
+                processed_jobs=processed_jobs,
+                generated_jobs=generated_jobs,
+                cur_episode=cur_episode,
+                diff_episode=cur_episode - episode,
+                now=env._sim_env.now,
+                elapsed=elapsed_wall_time,
+            )
+
+        By routing through this helper, experiments that use Gymnasium can
+        produce console output and SQLite episode rows that are directly
+        comparable to the original DSARSA runs.
+        """
+        if self._data_storage is None:
+            raise RuntimeError("DataStorage not initialized; did you build the simulator?")
+
+        module_name = f"Node#{node_uid}"
+        Log.minfo(
+            module_name,
+            (
+                f"episode={episode} e={eps:.2f} score={score} jobs={jobs} "
+                f"average_reward=[{average_reward}] "
+                f"processed_jobs={processed_jobs} generated_jobs={generated_jobs} "
+                f"cur_episode={cur_episode} diff_episode={diff_episode} "
+                f"now={now} elapsed={elapsed}"
+            ),
+        )
+
+        # Persist episode-level stats exactly like Node._log_episode_data does.
+        self._data_storage.done_episode(
+            node_uid=node_uid,
+            episode=episode,
+            eps=eps,
+            score=score,
+            total_jobs=processed_jobs,
+            loss=loss,
+            mse=mse,
+            mae=mae,
         )
