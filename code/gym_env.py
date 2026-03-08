@@ -29,6 +29,7 @@ from typing import Any
 
 import gymnasium as gym
 import numpy as np
+import simpy
 
 from log import Log
 
@@ -148,7 +149,11 @@ class SchedulingEnv(gym.Env):
         self._scheduler: Node | None = None
         self._current_job: Any = None
         self._step_count = 0
+        self._cached_possible_actions: list[int] | None = None
         self._build_simulator_components()
+        # Single long-lived process that forwards (action, step_index) to scheduler store.
+        self._action_queue = simpy.Store(self._sim_env)
+        self._sim_env.process(self._action_worker_loop())
 
         # Observation: same as Node._get_state_representation(job) -> list of ints; cast to float32.
         obs_flat = self._get_reference_observation()
@@ -252,12 +257,17 @@ class SchedulingEnv(gym.Env):
         # Use the common helper to advance until the next decision point and retrieve the job.
         self._current_job = self._advance_until_next_decision_point()
         if self._current_job is None:
-            # No job ever arrived; return a zero observation and mark as truncated episode.
+            self._cached_possible_actions = None
             obs = np.zeros(self._obs_dim, dtype=np.float32)
             info: dict[str, Any] = {"warning": "No job arrived before simulation stopped."}
             return obs, info
 
-        obs = self._extract_observation(self._current_job)
+        # Compute state once and cache obs + possible_actions (opt A).
+        state = self._scheduler._get_state_representation(self._current_job)
+        obs = np.array(state, dtype=np.float32)
+        self._cached_possible_actions = self._scheduler._get_possible_actions(
+            self._current_job, state
+        )
         info: dict[str, Any] = {}
         return obs, info
 
@@ -297,18 +307,12 @@ class SchedulingEnv(gym.Env):
         # possible_actions = self._scheduler._get_possible_actions(current_job, state_list)
         # if action not in possible_actions: ...
 
-        # Schedule a tiny SimPy process that puts (action, step_index) into the scheduler's store.
-        # step_index allows the agent to match delayed rewards to (s,a) for D-SARSA learning.
+        # Put (action, step_index) into our queue; single worker process forwards to scheduler (opt B).
         dispatch_step_index = self._step_count
-        store_value: int | tuple[int, int] = (action, dispatch_step_index)
-
-        def _put_action(env, store, value):
-            yield store.put(value)
-
+        store_value: tuple[int, int] = (action, dispatch_step_index)
         if self._scheduler._action_store is None:
             raise RuntimeError("Scheduler action store is None; gym_mode might be disabled.")
-
-        self._sim_env.process(_put_action(self._sim_env, self._scheduler._action_store, store_value))
+        self._action_queue.put(store_value)
 
         # Advance simulator until the next decision point (next job arrival requiring a decision),
         # or until the simulation naturally ends.
@@ -347,12 +351,16 @@ class SchedulingEnv(gym.Env):
         ):
             truncated = True
 
-        # Build next observation.
+        # Build next observation and cache possible_actions from state (opt A: single state computation).
         if next_job is not None and not (terminated or truncated):
-            next_obs = self._extract_observation(next_job)
+            state = self._scheduler._get_state_representation(next_job)
+            next_obs = np.array(state, dtype=np.float32)
+            self._cached_possible_actions = self._scheduler._get_possible_actions(
+                next_job, state
+            )
         else:
-            # Terminal observation; by convention, return zeros.
             next_obs = np.zeros(self._obs_dim, dtype=np.float32)
+            self._cached_possible_actions = None
 
         # Build info dict: completed list for D-SARSA (step_index, reward) per job.
         info: dict[str, Any] = {"completed": completed_with_index}
@@ -399,12 +407,19 @@ class SchedulingEnv(gym.Env):
         state = self._scheduler._get_state_representation(job)
         return np.array(state, dtype=np.float32)
 
+    def _action_worker_loop(self):
+        """Single long-lived process: forward (action, step_index) from queue to scheduler store (opt B)."""
+        while True:
+            value = yield self._action_queue.get()
+            yield self._scheduler._action_store.put(value)
+
     def get_possible_actions(self) -> list[int]:
         """
         Return possible action indices for the current pending job.
-        Must be called after reset() or after step() when there is a current job.
-        Used by D-SARSA and other agents that need to respect action masking.
+        Uses cached value from last reset/step when available (opt A).
         """
+        if self._cached_possible_actions is not None:
+            return self._cached_possible_actions
         if self._scheduler is None or self._current_job is None:
             return list(range(self._action_dim))
         state = self._scheduler._get_state_representation(self._current_job)
