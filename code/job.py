@@ -108,6 +108,9 @@ class Job:
         self._state_updated = []
         self._reward_batteries = 0.0
 
+        # Gym-mode: dispatch step index for matching rewards to (s,a) in external D-SARSA
+        self._gym_dispatch_step_index: int | None = None
+
     def __str__(self):
         return f"Job#{self._uid}#N{self._node_uid}#E{self._episode}"
 
@@ -116,6 +119,12 @@ class Job:
 
     def set_reward_batteries(self, reward_batteries):
         self._reward_batteries = reward_batteries
+
+    def set_gym_dispatch_step_index(self, step_index: int) -> None:
+        self._gym_dispatch_step_index = step_index
+
+    def get_gym_dispatch_step_index(self) -> int | None:
+        return self._gym_dispatch_step_index
 
     #
     # Actions
