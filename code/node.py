@@ -1216,7 +1216,11 @@ class Node:
         # next decision will signal on a fresh event
         self._decision_required_event = simpy.Event(self._env)
 
-        action = yield self._action_store.get()
+        value = yield self._action_store.get()
+        action = value[0] if isinstance(value, tuple) else value
+        step_index = value[1] if isinstance(value, tuple) and len(value) >= 2 else None
+        if step_index is not None and hasattr(job, "set_gym_dispatch_step_index"):
+            job.set_gym_dispatch_step_index(step_index)
         job.set_reward_batteries(self._get_reward_battery(action=action))
         job.save_state_snapshot(state)
         job.save_action(action, self._actions_space != Node.ActionsSpace.OTHER_CLUSTERS)

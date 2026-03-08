@@ -297,29 +297,38 @@ class SchedulingEnv(gym.Env):
         # possible_actions = self._scheduler._get_possible_actions(current_job, state_list)
         # if action not in possible_actions: ...
 
-        # Schedule a tiny SimPy process that simply puts the action into the scheduler's store.
+        # Schedule a tiny SimPy process that puts (action, step_index) into the scheduler's store.
+        # step_index allows the agent to match delayed rewards to (s,a) for D-SARSA learning.
+        dispatch_step_index = self._step_count
+        store_value: int | tuple[int, int] = (action, dispatch_step_index)
+
         def _put_action(env, store, value):
             yield store.put(value)
 
         if self._scheduler._action_store is None:
             raise RuntimeError("Scheduler action store is None; gym_mode might be disabled.")
 
-        self._sim_env.process(_put_action(self._sim_env, self._scheduler._action_store, action))
+        self._sim_env.process(_put_action(self._sim_env, self._scheduler._action_store, store_value))
 
         # Advance simulator until the next decision point (next job arrival requiring a decision),
         # or until the simulation naturally ends.
         next_job = self._advance_until_next_decision_point()
 
         # Delayed reward: sum rewards for any jobs that finished since the last
-        # decision, as queued by Node in _gym_completed_jobs. This preserves
-        # concurrency while avoiding scanning the full _scheduled_jobs backlog.
+        # decision, as queued by Node in _gym_completed_jobs. Also build list of
+        # (step_index, reward) for external D-SARSA so rewards can be matched to (s,a).
         reward = 0.0
+        completed_with_index: list[tuple[int, float]] = []
         completed_jobs = getattr(self._scheduler, "_gym_completed_jobs", [])
         while completed_jobs:
             job = completed_jobs.pop(0)
             try:
                 job_action = job.get_action(0)
-                reward += self._compute_reward(job, job_action)
+                r = self._compute_reward(job, job_action)
+                reward += r
+                step_idx = getattr(job, "get_gym_dispatch_step_index", lambda: None)()
+                if step_idx is not None:
+                    completed_with_index.append((step_idx, r))
             except Exception:
                 continue
 
@@ -345,8 +354,8 @@ class SchedulingEnv(gym.Env):
             # Terminal observation; by convention, return zeros.
             next_obs = np.zeros(self._obs_dim, dtype=np.float32)
 
-        # Build info dict; optionally include aggregate info on completed jobs.
-        info: dict[str, Any] = {}
+        # Build info dict: completed list for D-SARSA (step_index, reward) per job.
+        info: dict[str, Any] = {"completed": completed_with_index}
 
         # Update internal counters and current job.
         self._step_count += 1
@@ -389,6 +398,17 @@ class SchedulingEnv(gym.Env):
             return np.zeros(self._obs_dim, dtype=np.float32)
         state = self._scheduler._get_state_representation(job)
         return np.array(state, dtype=np.float32)
+
+    def get_possible_actions(self) -> list[int]:
+        """
+        Return possible action indices for the current pending job.
+        Must be called after reset() or after step() when there is a current job.
+        Used by D-SARSA and other agents that need to respect action masking.
+        """
+        if self._scheduler is None or self._current_job is None:
+            return list(range(self._action_dim))
+        state = self._scheduler._get_state_representation(self._current_job)
+        return self._scheduler._get_possible_actions(self._current_job, state)
 
     def _compute_reward(self, job: Any, action: int) -> float:
         """
