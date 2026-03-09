@@ -18,9 +18,11 @@ from __future__ import annotations
 import time
 from datetime import datetime
 from typing import Any
+import multiprocessing
 
 import numpy as np
 
+from config import MAX_PARALLEL_SIMULATIONS
 from function_approximation import DSPSarsaTiling
 from gym_env import SchedulingEnv
 from node import Node
@@ -28,7 +30,6 @@ from node import Node
 
 # Hyperparameters aligned with sim_builder / legacy D-SARSA
 EPISODE_LENGTH = 60
-REWARD_ALPHA = 1.0
 SIM_TIME = 10_000
 TILING_NUM_TILINGS = 26
 TILING_MAX_SIZE = 33_554_432
@@ -37,6 +38,7 @@ SARSA_BETA = 0.01
 EPS_INIT = 0.90
 EPS_DECAY = 0.9995
 EPS_MIN = 0.05
+ALPHA_INCREMENT = 0.05
 
 
 class DSARSAAgent:
@@ -121,14 +123,15 @@ class DSARSAAgent:
             self._epsilon = max(self._epsilon, self._eps_min)
 
 
-def main() -> None:
-    session_id = datetime.now().strftime("%Y%m%d_gym_d_sarsa")
+def run_simulation(alpha: float) -> None:
+    session_prefix = datetime.now().strftime("%Y%m%d_gym_d_sarsa")
+    session_id = f"{session_prefix}_{alpha:.2f}"
 
     env = SchedulingEnv(
         actions_space_type=Node.ActionsSpace.ONLY_WORKERS,
         state_type=Node.StateType.JOB_TYPE,
         episode_length=EPISODE_LENGTH,
-        reward_alpha=REWARD_ALPHA,
+        reward_alpha=alpha,
         simulation_time=SIM_TIME,
         sim_time_limit=None,
         max_steps_per_episode=None,
@@ -192,7 +195,7 @@ def main() -> None:
                 if not needed.issubset(rewards_by_step.keys()):
                     break
                 avg_loss, mse = agent.learn_episode(
-                    trans, rewards_by_step, base, alpha=REWARD_ALPHA
+                    trans, rewards_by_step, base, alpha=alpha
                 )
                 for k in needed:
                     rewards_by_step.pop(k, None)
@@ -223,7 +226,7 @@ def main() -> None:
                     mse=mse,
                 )
                 print(
-                    f"[GymDSARSA] episode={flushed_episode} return={score:.3f} "
+                    f"[GymDSARSA] alpha={alpha:.2f} episode={flushed_episode} return={score:.3f} "
                     f"eps={agent.current_epsilon:.3f} steps={global_step} "
                     f"env_now={env._sim_env.now:.3f}"  # type: ignore[attr-defined]
                 )
@@ -235,6 +238,29 @@ def main() -> None:
 
     if getattr(env, "_data_storage", None) is not None:
         env._data_storage.done_simulation()  # type: ignore[attr-defined]
+
+
+def main() -> None:
+    num_cores = MAX_PARALLEL_SIMULATIONS
+
+    steps = int(round(1.0 / ALPHA_INCREMENT))
+    alpha_values = [round(i * ALPHA_INCREMENT, 2) for i in range(steps + 1)]
+
+    processes: list[multiprocessing.Process] = []
+    for alpha in alpha_values:
+        process = multiprocessing.Process(target=run_simulation, args=(alpha,))
+        processes.append(process)
+        process.start()
+
+        if len(processes) >= num_cores:
+            for p in processes:
+                p.join()
+            processes = []
+
+    for p in processes:
+        p.join()
+
+    print("All Gym D-SARSA simulations completed.")
 
 
 if __name__ == "__main__":
