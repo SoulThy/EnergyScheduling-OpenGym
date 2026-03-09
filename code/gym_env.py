@@ -181,7 +181,7 @@ class SchedulingEnv(gym.Env):
             session_uid=self._session_id,
             data_storage_session_id=self._session_id,
             learning_type=Node.LearningType.NO_LEARNING,
-            no_learning_policy=Node.NoLearningPolicy.RANDOM,
+            no_learning_policy=Node.NoLearningPolicy.GYMNASIUM,
             actions_space=self._actions_space_type,
             state_type=self._state_type,
             reward_alpha=self._reward_alpha,

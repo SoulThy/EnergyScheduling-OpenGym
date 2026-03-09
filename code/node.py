@@ -98,6 +98,7 @@ class Node:
         LEAST_LOADED_NOT_AWARE = 4
         LEAST_LOADED_AWARE_CLOUD = 5
         MAXIMUM_LIFESPANE = 6
+        GYMNASIUM = 7
 
     class DistributionArrivals(Enum):
         POISSON = 0
