@@ -18,6 +18,13 @@ from typing import List
 import numpy as np
 import simpy
 
+from config import (
+    NET_SPEED_CLIENT_SCHEDULER_MBIT,
+    NET_SPEED_SCHEDULER_CLOUD_MBIT,
+    NET_SPEED_SCHEDULER_WORKER_MBIT,
+    POWER_MAX_TRANSMISSION_W,
+    PROBING_ENERGY_COST_WH,
+)
 from function_approximation import DSPSarsaTiling
 from job import Job
 from log import Log
@@ -160,10 +167,10 @@ class Node:
                  job_exponential_desired_rates_fps_min=[0],
                  job_exponential_desired_rates_fps_max=[10],
                  # network
-                 net_speed_client_scheduler_mbits=200,
+                 net_speed_client_scheduler_mbits=NET_SPEED_CLIENT_SCHEDULER_MBIT,
                  net_speed_scheduler_scheduler_mbits=300,
-                 net_speed_scheduler_worker_mbits=1000,
-                 net_speed_scheduler_cloud_mbits=1000,
+                 net_speed_scheduler_worker_mbits=NET_SPEED_SCHEDULER_WORKER_MBIT,
+                 net_speed_scheduler_cloud_mbits=NET_SPEED_SCHEDULER_CLOUD_MBIT,
                  delay_probing=0.004,
                  # traffic
                  rate_l=1.0,
@@ -184,7 +191,7 @@ class Node:
                  battery_total_capacity_wh=10,
                  battery_initial_capacity_wh=10,
                  power_max_cpu_w=3.0,
-                 power_max_transmission_w=0.2,
+                 power_max_transmission_w=POWER_MAX_TRANSMISSION_W,
                  power_idle_w=2.0,
                  energy_to_idle_thresholds_enabled=False,
                  energy_to_idle_high_threshold=2,
@@ -1739,11 +1746,24 @@ class Node:
     #
     # Utils
     #
-
+    
     def _get_state_representation(self, arrived_job: Job) -> List[int]:
-        """Returns the current state used for learning"""
-        lifespans = []
+        """Returns the current state used for learning.
+
+        This method is the shared entry point for obtaining the scheduler's view
+        of the cluster state, used by both legacy and Gym-based D-SARSA. We
+        model state probing as an explicit energy-consuming operation on worker
+        nodes: whenever the scheduler queries their state, each worker pays a
+        configurable probing energy cost.
+        """
         worker_nodes = self._service_discovery.get_workers_in_cluster(self._node_belong_to_cluster)
+
+        # Apply probing energy cost once per state query on the scheduler.
+        if self._node_type == Node.NodeType.SCHEDULER and PROBING_ENERGY_COST_WH > 0.0:
+            for worker in worker_nodes:
+                worker._apply_probing_energy_cost(PROBING_ENERGY_COST_WH)
+
+        lifespans: List[float] = []
         for worker in worker_nodes:
             lifespans.append(worker.get_lifespan())
 
@@ -2049,3 +2069,21 @@ class Node:
 
     def _log_battery(self,batteries_cluster):
         self._service_data_storage.log_battery(self._env.now, self._uid, self._battery_current_capacity_wh, variance(batteries_cluster))
+
+    def _apply_probing_energy_cost(self, energy_cost_wh: float) -> None:
+        """Apply an extra energy discharge due to a probing operation.
+
+        This updates both the battery state and the per-round energy metrics.
+        A non-positive energy_cost_wh is treated as a no-op.
+        """
+        if energy_cost_wh <= 0.0:
+            return
+
+        # Treat probing as additional consumed energy this round (Wh).
+        self._metric_round_energy_consumed += energy_cost_wh
+        self._metric_round_energy_net -= energy_cost_wh
+
+        # Update battery capacity and clamp to [0, capacity].
+        self._battery_current_capacity_wh -= energy_cost_wh
+        if self._battery_current_capacity_wh < 0.0:
+            self._battery_current_capacity_wh = 0.0

@@ -19,6 +19,11 @@ import simpy
 
 from cloud import Cloud
 from config import WORKER_BATTERY_CAPACITIES
+from config import (
+    NET_SPEED_CLIENT_SCHEDULER_MBIT,
+    NET_SPEED_SCHEDULER_CLOUD_MBIT,
+    NET_SPEED_SCHEDULER_WORKER_MBIT,
+)
 from node import Node
 from service_data_storage import ServiceDataStorage
 from service_discovery import ServiceDiscovery
@@ -205,10 +210,10 @@ def _create_scheduler_node(
         rate_l_model_path_steady=False,
         rate_l_model_path_steady_for=2000,
         rate_l_model_path_steady_every=2000,
-        net_speed_client_scheduler_mbits=200,
+        net_speed_client_scheduler_mbits=NET_SPEED_CLIENT_SCHEDULER_MBIT,
         net_speed_scheduler_scheduler_mbits=300,
-        net_speed_scheduler_worker_mbits=1000,
-        net_speed_scheduler_cloud_mbits=1000,
+        net_speed_scheduler_worker_mbits=NET_SPEED_SCHEDULER_WORKER_MBIT,
+        net_speed_scheduler_cloud_mbits=NET_SPEED_SCHEDULER_CLOUD_MBIT,
         job_periodic_types=3,
         job_periodic_payload_sizes_mbytes=(0.050, 0.050, 0.050),
         job_periodic_duration_std_devs=(0.0003, 0.0003, 0.0003),
@@ -296,10 +301,10 @@ def _create_worker_node(
         rate_l_model_path_steady=False,
         rate_l_model_path_steady_for=2000,
         rate_l_model_path_steady_every=2000,
-        net_speed_client_scheduler_mbits=200,
+        net_speed_client_scheduler_mbits=NET_SPEED_CLIENT_SCHEDULER_MBIT,
         net_speed_scheduler_scheduler_mbits=300,
-        net_speed_scheduler_worker_mbits=1000,
-        net_speed_scheduler_cloud_mbits=1000,
+        net_speed_scheduler_worker_mbits=NET_SPEED_SCHEDULER_WORKER_MBIT,
+        net_speed_scheduler_cloud_mbits=NET_SPEED_SCHEDULER_CLOUD_MBIT,
         job_periodic_types=3,
         job_periodic_payload_sizes_mbytes=(0.050, 0.050, 0.050),
         job_periodic_duration_std_devs=(0.0003, 0.0003, 0.0003),

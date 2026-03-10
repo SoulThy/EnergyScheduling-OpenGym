@@ -39,3 +39,74 @@ WORKER_BATTERY_CAPACITIES: Final[Tuple[int, int, int]] = (
     _parse_worker_battery_capacities(os.getenv("WORKER_BATTERY_CAPACITIES"))
     or DEFAULT_WORKER_BATTERY_CAPACITIES
 )
+
+# ---------------------------------------------------------------------------
+# Network and radio parameters
+# ---------------------------------------------------------------------------
+#
+# These constants control the effective link speeds (in Mbit/s) used in the
+# simulator and the maximum radio transmission power. Adjusting them lets us
+# emulate different fog/edge environments without touching the core logic.
+#
+# The defaults below reduce bandwidth compared to the original code (which
+# used 200/1000 Mbit/s) to make job-communication costs more impactful while
+# remaining in a plausible range for fog devices.
+
+DEFAULT_NET_SPEED_CLIENT_SCHEDULER_MBIT: Final[float] = 10.0
+DEFAULT_NET_SPEED_SCHEDULER_WORKER_MBIT: Final[float] = 20.0
+
+# The thesis focuses on only workers, so it does not really care about this value.
+DEFAULT_NET_SPEED_SCHEDULER_CLOUD_MBIT: Final[float] = 50.0
+
+NET_SPEED_CLIENT_SCHEDULER_MBIT: Final[float] = float(
+    os.getenv("NET_SPEED_CLIENT_SCHEDULER_MBIT", str(DEFAULT_NET_SPEED_CLIENT_SCHEDULER_MBIT))
+)
+NET_SPEED_SCHEDULER_WORKER_MBIT: Final[float] = float(
+    os.getenv("NET_SPEED_SCHEDULER_WORKER_MBIT", str(DEFAULT_NET_SPEED_SCHEDULER_WORKER_MBIT))
+)
+NET_SPEED_SCHEDULER_CLOUD_MBIT: Final[float] = float(
+    os.getenv("NET_SPEED_SCHEDULER_CLOUD_MBIT", str(DEFAULT_NET_SPEED_SCHEDULER_CLOUD_MBIT))
+)
+
+# Maximum radio transmission power (W). This is used to convert job/probes
+# transmission times into energy. Increasing this value or reducing link
+# speeds above will make job and probes communication more energy-expensive.
+DEFAULT_POWER_MAX_TRANSMISSION_W: Final[float] = 0.5
+
+POWER_MAX_TRANSMISSION_W: Final[float] = float(
+    os.getenv("POWER_MAX_TRANSMISSION_W", str(DEFAULT_POWER_MAX_TRANSMISSION_W))
+)
+
+# ---------------------------------------------------------------------------
+# Probing energy cost
+# ---------------------------------------------------------------------------
+#
+# We assume:
+# - Probes have a fixed payload size (in bytes), e.g. a 200 B control packet.
+# - They use the same radio and link as scheduler→worker transmissions.
+# - There is an additional "crossfactor" energy cost that is independent of
+#   payload size (protocol stack, wake-up, etc.).
+#
+# The per-probe energy (in joules) is:
+#   E_probe_J = P_tx * (probe_bits / (speed_bits_per_s)) + E_crossfactor_J
+# and we expose the equivalent in Wh for use in the battery model.
+
+PROBE_SIZE_BYTES: Final[int] = 200
+PROBE_CROSSFACTOR_J: Final[float] = 0.0002  # 0.2 mJ total (e.g., 0.1 mJ RX + 0.1 mJ TX)
+
+def _compute_default_probing_energy_cost_wh() -> float:
+    """Compute default per-probe energy cost (Wh) from radio parameters."""
+    probe_bits = PROBE_SIZE_BYTES * 8
+    speed_bits_per_s = NET_SPEED_SCHEDULER_WORKER_MBIT * 1e6
+    if speed_bits_per_s <= 0.0:
+        return 0.0
+    time_s = probe_bits / speed_bits_per_s
+    energy_j = POWER_MAX_TRANSMISSION_W * time_s + PROBE_CROSSFACTOR_J
+    return energy_j / 3600.0
+
+
+DEFAULT_PROBING_ENERGY_COST_WH: Final[float] = _compute_default_probing_energy_cost_wh()
+
+PROBING_ENERGY_COST_WH: Final[float] = float(
+    os.getenv("PROBING_ENERGY_COST_WH", str(DEFAULT_PROBING_ENERGY_COST_WH))
+)
