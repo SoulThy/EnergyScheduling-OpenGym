@@ -3,15 +3,20 @@ from __future__ import annotations
 import os
 from typing import Final, Tuple
 
-DEFAULT_MAX_PARALLEL_SIMULATIONS: Final[int] = 2
+from default_config import (
+    DEFAULT_MAX_PARALLEL_SIMULATIONS,
+    DEFAULT_POWER_MAX_TRANSMISSION_W,
+    DEFAULT_WORKER_BATTERY_CAPACITIES,
+    DEFAULT_NET_SPEED_CLIENT_SCHEDULER_MBIT,
+    DEFAULT_NET_SPEED_SCHEDULER_WORKER_MBIT,
+    DEFAULT_NET_SPEED_SCHEDULER_CLOUD_MBIT,
+)
 
 # Single knob to control how many simulations run in parallel across all runners.
 # Can be overridden at runtime with the MAX_PARALLEL_SIMULATIONS environment variable.
 MAX_PARALLEL_SIMULATIONS: Final[int] = int(
     os.getenv("MAX_PARALLEL_SIMULATIONS", str(DEFAULT_MAX_PARALLEL_SIMULATIONS))
 )
-
-DEFAULT_WORKER_BATTERY_CAPACITIES: Final[Tuple[int, int, int]] = (7, 8, 9)
 
 
 def _parse_worker_battery_capacities(env_value: str | None) -> Tuple[int, int, int] | None:
@@ -48,15 +53,9 @@ WORKER_BATTERY_CAPACITIES: Final[Tuple[int, int, int]] = (
 # simulator and the maximum radio transmission power. Adjusting them lets us
 # emulate different fog/edge environments without touching the core logic.
 #
-# The defaults below reduce bandwidth compared to the original code (which
-# used 200/1000 Mbit/s) to make job-communication costs more impactful while
-# remaining in a plausible range for fog devices.
-
-DEFAULT_NET_SPEED_CLIENT_SCHEDULER_MBIT: Final[float] = 10.0
-DEFAULT_NET_SPEED_SCHEDULER_WORKER_MBIT: Final[float] = 20.0
-
-# The thesis focuses on only workers, so it does not really care about this value.
-DEFAULT_NET_SPEED_SCHEDULER_CLOUD_MBIT: Final[float] = 50.0
+# The defaults below are taken from `default_config.py` and reproduce the
+# original code (200/1000/1000 Mbit/s). Environment variables can override
+# them to explore alternative regimes (e.g., slower fog links).
 
 NET_SPEED_CLIENT_SCHEDULER_MBIT: Final[float] = float(
     os.getenv("NET_SPEED_CLIENT_SCHEDULER_MBIT", str(DEFAULT_NET_SPEED_CLIENT_SCHEDULER_MBIT))
@@ -67,11 +66,6 @@ NET_SPEED_SCHEDULER_WORKER_MBIT: Final[float] = float(
 NET_SPEED_SCHEDULER_CLOUD_MBIT: Final[float] = float(
     os.getenv("NET_SPEED_SCHEDULER_CLOUD_MBIT", str(DEFAULT_NET_SPEED_SCHEDULER_CLOUD_MBIT))
 )
-
-# Maximum radio transmission power (W). This is used to convert job/probes
-# transmission times into energy. Increasing this value or reducing link
-# speeds above will make job and probes communication more energy-expensive.
-DEFAULT_POWER_MAX_TRANSMISSION_W: Final[float] = 0.5
 
 POWER_MAX_TRANSMISSION_W: Final[float] = float(
     os.getenv("POWER_MAX_TRANSMISSION_W", str(DEFAULT_POWER_MAX_TRANSMISSION_W))
