@@ -13,7 +13,7 @@ worker Nodes, ServiceDiscovery, and ServiceDataStorage, so that legacy runners
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, Iterable, Tuple, List
 
 import simpy
 
@@ -45,6 +45,8 @@ def build_simulator(
     solar_panel_spec_by_node_id: dict[int, object] | None = None,
     cloud_latency_roundtrip_ms: int = 20,
     gym_mode: bool = False,
+    job_periodic_payload_sizes_mbytes: Tuple[float, float, float] | None = None,
+    job_exponential_payload_sizes_mbytes: List[float] | None = None,
 ) -> tuple[simpy.Environment, list[Node], Cloud, ServiceDiscovery, ServiceDataStorage]:
     """
     Build the full simulator: SimPy env, Cloud, scheduler + 3 workers, discovery, data storage.
@@ -75,6 +77,12 @@ def build_simulator(
     if solar_panel_spec_by_node_id is None:
         solar_panel_spec_by_node_id = {}
 
+    # Fallback to legacy defaults if job sizes are not explicitly provided.
+    if job_periodic_payload_sizes_mbytes is None:
+        job_periodic_payload_sizes_mbytes = (0.050, 0.050, 0.050)
+    if job_exponential_payload_sizes_mbytes is None:
+        job_exponential_payload_sizes_mbytes = [0.1]
+
     env = simpy.Environment()
     cloud = Cloud(env, latency_roundtrip_ms=cloud_latency_roundtrip_ms)
     worker_batt_1, worker_batt_2, worker_batt_3 = WORKER_BATTERY_CAPACITIES
@@ -95,6 +103,8 @@ def build_simulator(
             solar_panel_enabled=solar_panel_enabled,
             solar_panel_spec=solar_panel_spec_by_node_id.get(0),
             gym_mode=gym_mode,
+            job_periodic_payload_sizes_mbytes=job_periodic_payload_sizes_mbytes,
+            job_exponential_payload_sizes_mbytes=job_exponential_payload_sizes_mbytes,
         )
     )
     nodes.append(
@@ -114,6 +124,8 @@ def build_simulator(
             solar_panel_enabled=solar_panel_enabled,
             solar_panel_spec=solar_panel_spec_by_node_id.get(1),
             machine_speed=1.8,
+            job_periodic_payload_sizes_mbytes=job_periodic_payload_sizes_mbytes,
+            job_exponential_payload_sizes_mbytes=job_exponential_payload_sizes_mbytes,
         )
     )
     nodes.append(
@@ -133,6 +145,8 @@ def build_simulator(
             solar_panel_enabled=solar_panel_enabled,
             solar_panel_spec=solar_panel_spec_by_node_id.get(2),
             machine_speed=1.7,
+            job_periodic_payload_sizes_mbytes=job_periodic_payload_sizes_mbytes,
+            job_exponential_payload_sizes_mbytes=job_exponential_payload_sizes_mbytes,
         )
     )
     nodes.append(
@@ -152,6 +166,8 @@ def build_simulator(
             solar_panel_enabled=solar_panel_enabled,
             solar_panel_spec=solar_panel_spec_by_node_id.get(3),
             machine_speed=1.4,
+            job_periodic_payload_sizes_mbytes=job_periodic_payload_sizes_mbytes,
+            job_exponential_payload_sizes_mbytes=job_exponential_payload_sizes_mbytes,
         )
     )
 
@@ -188,6 +204,8 @@ def _create_scheduler_node(
     solar_panel_enabled: bool = False,
     solar_panel_spec: object = None,
     gym_mode: bool = False,
+    job_periodic_payload_sizes_mbytes: Tuple[float, float, float] | None = None,
+    job_exponential_payload_sizes_mbytes: List[float] | None = None,
 ) -> Node:
     """Create scheduler node (node_id=0). Same kwargs as legacy create_node for scheduler."""
     return Node(
@@ -215,7 +233,9 @@ def _create_scheduler_node(
         net_speed_scheduler_worker_mbits=NET_SPEED_SCHEDULER_WORKER_MBIT,
         net_speed_scheduler_cloud_mbits=NET_SPEED_SCHEDULER_CLOUD_MBIT,
         job_periodic_types=3,
-        job_periodic_payload_sizes_mbytes=(0.050, 0.050, 0.050),
+        job_periodic_payload_sizes_mbytes=job_periodic_payload_sizes_mbytes
+        if job_periodic_payload_sizes_mbytes is not None
+        else (0.050, 0.050, 0.050),
         job_periodic_duration_std_devs=(0.0003, 0.0003, 0.0003),
         job_periodic_percentages=(0.33, 0.33, 0.34),
         job_periodic_deadlines=(0.016, 0.033, 0.070),
@@ -226,7 +246,9 @@ def _create_scheduler_node(
         job_periodic_desired_rates_fps_max=(60, 30, 15),
         job_periodic_desired_rates_fps_min=(50, 20, 10),
         job_exponential_types=1,
-        job_exponential_payload_sizes_mbytes=[0.1],
+        job_exponential_payload_sizes_mbytes=job_exponential_payload_sizes_mbytes
+        if job_exponential_payload_sizes_mbytes is not None
+        else [0.1],
         job_exponential_duration_std_devs=[0.01],
         job_exponential_arrival_time_std_devs=[0.01],
         job_exponential_percentages=[1],
@@ -279,6 +301,8 @@ def _create_worker_node(
     solar_panel_enabled: bool = False,
     solar_panel_spec: object = None,
     machine_speed: float = 1.0,
+    job_periodic_payload_sizes_mbytes: Tuple[float, float, float] | None = None,
+    job_exponential_payload_sizes_mbytes: List[float] | None = None,
 ) -> Node:
     """Create worker node. Same kwargs as legacy create_node for workers."""
     return Node(
@@ -306,7 +330,9 @@ def _create_worker_node(
         net_speed_scheduler_worker_mbits=NET_SPEED_SCHEDULER_WORKER_MBIT,
         net_speed_scheduler_cloud_mbits=NET_SPEED_SCHEDULER_CLOUD_MBIT,
         job_periodic_types=3,
-        job_periodic_payload_sizes_mbytes=(0.050, 0.050, 0.050),
+        job_periodic_payload_sizes_mbytes=job_periodic_payload_sizes_mbytes
+        if job_periodic_payload_sizes_mbytes is not None
+        else (0.050, 0.050, 0.050),
         job_periodic_duration_std_devs=(0.0003, 0.0003, 0.0003),
         job_periodic_percentages=(0.33, 0.33, 0.34),
         job_periodic_deadlines=(0.016, 0.033, 0.070),
@@ -317,7 +343,9 @@ def _create_worker_node(
         job_periodic_desired_rates_fps_max=(60, 30, 15),
         job_periodic_desired_rates_fps_min=(50, 20, 10),
         job_exponential_types=1,
-        job_exponential_payload_sizes_mbytes=[0.1],
+        job_exponential_payload_sizes_mbytes=job_exponential_payload_sizes_mbytes
+        if job_exponential_payload_sizes_mbytes is not None
+        else [0.1],
         job_exponential_duration_std_devs=[0.01],
         job_exponential_arrival_time_std_devs=[0.01],
         job_exponential_percentages=[1],
