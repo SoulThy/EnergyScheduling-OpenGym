@@ -523,6 +523,7 @@ class Node:
         self._metric_round_energy_consumed = 0.0
         self._metric_round_energy_net = 0.0
         self._metric_round_energy_gained = 0.0
+        self._total_probing_energy_wh = 0.0
         self._time_energy_execution = 0.0
         self._time_energy_transmission = 0.0
         self._time_round_total = 0.0
@@ -2082,8 +2083,13 @@ class Node:
         # Treat probing as additional consumed energy this round (Wh).
         self._metric_round_energy_consumed += energy_cost_wh
         self._metric_round_energy_net -= energy_cost_wh
+        self._total_probing_energy_wh += energy_cost_wh
 
         # Update battery capacity and clamp to [0, capacity].
         self._battery_current_capacity_wh -= energy_cost_wh
         if self._battery_current_capacity_wh < 0.0:
             self._battery_current_capacity_wh = 0.0
+
+    def get_total_probing_energy_wh(self) -> float:
+        """Total probing energy paid by this node over the whole simulation."""
+        return self._total_probing_energy_wh

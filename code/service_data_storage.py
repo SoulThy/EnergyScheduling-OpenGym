@@ -11,6 +11,14 @@ import sqlite3
 import time
 from typing import List
 
+from config import (
+    NET_SPEED_SCHEDULER_WORKER_MBIT,
+    POWER_MAX_TRANSMISSION_W,
+    PROBE_CROSSFACTOR_J,
+    PROBE_SIZE_BYTES,
+    PROBING_ENERGY_COST_WH,
+    WORKER_BATTERY_CAPACITIES,
+)
 from job import Job
 from log import Log
 from node import Node
@@ -125,6 +133,14 @@ class ServiceDataStorage:
                                                     value real,
                                                     primary key (time, node_uid, state, action)
                                                 )''')
+        self._db_cur.execute('''CREATE TABLE probing_energy (
+                                                    node_uid integer,
+                                                    energy_wh real
+                                                )''')
+        self._db_cur.execute('''CREATE TABLE sim_config (
+                                                    key text primary key,
+                                                    value text
+                                                )''')
         self._db.commit()
         Log.minfo(MODULE, "DB init")
 
@@ -217,6 +233,31 @@ class ServiceDataStorage:
                                     {time}, "{state}", {node_uid}, {action}, {value})''')
 
     def done_simulation(self):
+        # Persist static simulation configuration so it can be inspected from log.db.
+        # These values are global for the run and independent of node.
+        sim_config_values = {
+            "NET_SPEED_SCHEDULER_WORKER_MBIT": str(NET_SPEED_SCHEDULER_WORKER_MBIT),
+            "PROBE_SIZE_BYTES": str(PROBE_SIZE_BYTES),
+            "PROBE_CROSSFACTOR_J": str(PROBE_CROSSFACTOR_J),
+            "PROBING_ENERGY_COST_WH": str(PROBING_ENERGY_COST_WH),
+            "POWER_MAX_TRANSMISSION_W": str(POWER_MAX_TRANSMISSION_W),
+            "WORKER_BATTERY_CAPACITIES": ",".join(str(v) for v in WORKER_BATTERY_CAPACITIES),
+        }
+        for key, value in sim_config_values.items():
+            self._db_cur.execute(
+                '''INSERT OR REPLACE INTO sim_config (key, value) VALUES (?, ?)''',
+                (key, value),
+            )
+
+        # Before dumping the in-memory DB to disk, persist total probing energy per node.
+        for node in self._nodes:
+            try:
+                energy_wh = node.get_total_probing_energy_wh()
+            except AttributeError:
+                # Backward compatibility if older Node objects do not expose this.
+                continue
+            self.log_probing_energy(node.get_uid(), energy_wh)
+
         # Persist all pending changes in a single transaction before dumping to disk.
         self._db.commit()
         self._copy_db_to_file()
@@ -281,4 +322,12 @@ class ServiceDataStorage:
                         {timestamp}, 
                         {worker_id},
                         {max_battery}
+            )''')
+
+    def log_probing_energy(self, node_uid: int, energy_wh: float) -> None:
+        """Persist total probing energy (Wh) for a node at the end of the simulation."""
+        self._db_cur.execute(
+            f'''INSERT INTO probing_energy VALUES (
+                        {node_uid},
+                        {energy_wh}
             )''')
