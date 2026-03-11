@@ -90,6 +90,34 @@ def compute_stats(db_path: Path) -> Dict[str, Any]:
             (total_probing_energy_wh / total_battery_capacity_wh) if total_battery_capacity_wh > 0 else 0.0
         )
 
+        # ----------------------------------------------------------------------------
+        # Expected average job size (MB) under default arrival rates
+        # ----------------------------------------------------------------------------
+        # By design, periodic and exponential jobs use independent arrival processes
+        # with fixed rates. In the default D-SARSA setup, the scheduler uses:
+        #   periodic rates: 60, 30, 15 fps  -> total 105
+        #   exponential rate: 10 fps        -> total 10
+        # so the probability that the next job is periodic is 105/115 and
+        # exponential is 10/115.
+        #
+        # We combine those with the representative payload sizes from sim_config.
+        periodic_size_mb = 0.050
+        exp_size_mb = 0.100
+        if "JOB_PERIODIC_PAYLOAD_SIZE_MB" in sim_config:
+            try:
+                periodic_size_mb = float(sim_config["JOB_PERIODIC_PAYLOAD_SIZE_MB"])
+            except ValueError:
+                pass
+        if "JOB_EXPONENTIAL_PAYLOAD_SIZE_MB" in sim_config:
+            try:
+                exp_size_mb = float(sim_config["JOB_EXPONENTIAL_PAYLOAD_SIZE_MB"])
+            except ValueError:
+                pass
+
+        p_periodic = 105.0 / 115.0
+        p_exponential = 1.0 - p_periodic
+        avg_job_size_mb = p_periodic * periodic_size_mb + p_exponential * exp_size_mb
+
         return {
             "sim_config": sim_config,
             "total_jobs": int(total_jobs),
@@ -105,6 +133,7 @@ def compute_stats(db_path: Path) -> Dict[str, Any]:
             "avg_total_time_executed_s": (
                 float(avg_total_time_executed) if avg_total_time_executed is not None else None
             ),
+            "avg_job_size_mb": avg_job_size_mb,
             "probing_energy_by_node_wh": probing_energy_by_node,
             "total_probing_energy_wh": total_probing_energy_wh,
             "total_battery_capacity_wh": total_battery_capacity_wh,
@@ -174,6 +203,8 @@ def main() -> None:
         print(f"- avg_total_time_executed_s: {avg_exec:.4f}")
     else:
         print("- avg_total_time_executed_s: n/a")
+
+    print(f"- avg_job_size_mb (expected): {stats['avg_job_size_mb']:.6f}")
 
     # Probing-specific statistics (only for runs where we logged probing energy).
     pe_by_node = stats["probing_energy_by_node_wh"]

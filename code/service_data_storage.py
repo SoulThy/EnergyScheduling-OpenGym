@@ -235,6 +235,32 @@ class ServiceDataStorage:
     def done_simulation(self):
         # Persist static simulation configuration so it can be inspected from log.db.
         # These values are global for the run and independent of node.
+
+        # Try to infer representative job payload sizes from the scheduler node.
+        periodic_size_mb = None
+        exponential_size_mb = None
+        try:
+            scheduler_node = next(
+                node for node in self._nodes if node.get_type() == Node.NodeType.SCHEDULER
+            )
+        except StopIteration:
+            scheduler_node = None
+
+        if scheduler_node is not None:
+            try:
+                periodic_sizes = getattr(scheduler_node, "_job_periodic_payload_sizes_mbytes", None)
+                if periodic_sizes:
+                    periodic_size_mb = sum(periodic_sizes) / float(len(periodic_sizes))
+                exponential_sizes = getattr(
+                    scheduler_node, "_job_exponential_payload_sizes_mbytes", None
+                )
+                if exponential_sizes:
+                    exponential_size_mb = sum(exponential_sizes) / float(len(exponential_sizes))
+            except Exception:
+                # Best-effort only; fall back to defaults in the reader if needed.
+                periodic_size_mb = None
+                exponential_size_mb = None
+
         sim_config_values = {
             "NET_SPEED_SCHEDULER_WORKER_MBIT": str(NET_SPEED_SCHEDULER_WORKER_MBIT),
             "PROBE_SIZE_BYTES": str(PROBE_SIZE_BYTES),
@@ -243,6 +269,11 @@ class ServiceDataStorage:
             "POWER_MAX_TRANSMISSION_W": str(POWER_MAX_TRANSMISSION_W),
             "WORKER_BATTERY_CAPACITIES": ",".join(str(v) for v in WORKER_BATTERY_CAPACITIES),
         }
+        if periodic_size_mb is not None:
+            sim_config_values["JOB_PERIODIC_PAYLOAD_SIZE_MB"] = str(periodic_size_mb)
+        if exponential_size_mb is not None:
+            sim_config_values["JOB_EXPONENTIAL_PAYLOAD_SIZE_MB"] = str(exponential_size_mb)
+
         for key, value in sim_config_values.items():
             self._db_cur.execute(
                 '''INSERT OR REPLACE INTO sim_config (key, value) VALUES (?, ?)''',
