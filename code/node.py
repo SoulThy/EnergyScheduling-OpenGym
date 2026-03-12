@@ -737,8 +737,11 @@ class Node:
 
         def actual_time(delay, sigma):
             if self._distribution_network_latency == Node.DistributionNetworkLatency.GAUSSIAN:
-                return random.gauss(delay, sigma)
-            return delay
+                sampled = random.gauss(delay, sigma)
+                # Clamp to avoid negative simulated delays, which SimPy rejects.
+                return max(0.0, sampled)
+            # Also clamp deterministic delays to be safe against underflow/rounding.
+            return max(0.0, delay)
 
         def time_to_wait(job, speed):
             return job.get_payload_size() * 8 / speed
