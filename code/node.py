@@ -524,6 +524,9 @@ class Node:
         self._metric_round_energy_net = 0.0
         self._metric_round_energy_gained = 0.0
         self._total_probing_energy_wh = 0.0
+        self._total_idle_energy_wh = 0.0
+        self._total_execution_energy_wh = 0.0
+        self._total_transmission_energy_wh = 0.0
         self._time_energy_execution = 0.0
         self._time_energy_transmission = 0.0
         self._time_round_total = 0.0
@@ -1041,12 +1044,16 @@ class Node:
             try:
                 yield self._env.timeout(1)
 
-                # discharge the battery
-                to_discharge_ws = self._compute_battery_discharge(
+                # discharge the battery (split for energy breakdown logging)
+                d_idle, d_execution, d_transmission = self._compute_battery_discharge_split(
                     1.0,
                     self._time_energy_execution,
                     self._time_energy_transmission)
-      
+                to_discharge_ws = d_idle + d_execution + d_transmission
+                self._total_idle_energy_wh += d_idle
+                self._total_execution_energy_wh += d_execution
+                self._total_transmission_energy_wh += d_transmission
+
                 to_charge_ws = 0.0
                 # recharge according to the solar model
                 if self._solar_power_model is not None:
@@ -2096,3 +2103,15 @@ class Node:
     def get_total_probing_energy_wh(self) -> float:
         """Total probing energy paid by this node over the whole simulation."""
         return self._total_probing_energy_wh
+
+    def get_total_idle_energy_wh(self) -> float:
+        """Total idle (1 s per round) energy consumed by this node."""
+        return self._total_idle_energy_wh
+
+    def get_total_execution_energy_wh(self) -> float:
+        """Total CPU execution energy consumed by this node."""
+        return self._total_execution_energy_wh
+
+    def get_total_transmission_energy_wh(self) -> float:
+        """Total transmission energy consumed by this node."""
+        return self._total_transmission_energy_wh

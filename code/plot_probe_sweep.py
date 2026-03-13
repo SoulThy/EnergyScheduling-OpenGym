@@ -4,15 +4,22 @@ Plot probing-energy share and job success ratio vs probing packet size
 from a probe-size sweep (run_simulation_d_sarsa_probe_sweep.py).
 
 Finds all log.db under results/data/_log/learning/D_SARSA/ONLY_WORKERS/*B_PS/,
-calls log_simulation_db.compute_stats() on each, and produces a single figure
-with one x-axis (probing packet size) and two y-axes:
-- left: probing energy share (red)
-- right: job success ratio (green)
+calls log_simulation_db.compute_stats() on each, and produces:
+- One double y-axis figure (probing energy share + job success ratio vs probe size)
+  stored under _log (e.g. .../ONLY_WORKERS/probe_sweep_graph.png).
+- One pie chart of energy share (processing / transmission / probing) per simulation,
+  stored in each simulation folder next to its log.db (e.g. .../200B_PS/energy_pie.png).
+
+Note on sigma (battery variance) and 60FPS: When probing packet size increases,
+the 60FPS worker often dies earlier than 15/30FPS workers because it runs more
+jobs (highest load) and thus consumes more execution+transmission energy; extra
+probing cost is applied to all workers equally, so the already busiest node hits
+zero first and sigma (variance of battery levels) increases.
 
 Usage:
   From repo root or code/:  python code/plot_probe_sweep.py [--results-dir PATH] [--out FILE]
   Default results dir: code/../results/data  (so results/data when run from code/)
-  Default output: results/data/probe_sweep_graph.png
+  Default output: <results-dir>/_log/learning/D_SARSA/ONLY_WORKERS/probe_sweep_graph.png
 """
 
 from __future__ import annotations
@@ -63,12 +70,17 @@ def load_sweep_stats(db_paths: List[Path]) -> List[Dict[str, Any]]:
             continue
         if "probing_energy_share" not in stats or "job_success_ratio" not in stats:
             continue
-        rows.append({
+        row = {
             "probe_size_bytes": probe_bytes,
             "probing_energy_share": stats["probing_energy_share"],
             "job_success_ratio": stats["job_success_ratio"],
             "db_path": db_path,
-        })
+        }
+        if "execution_energy_share" in stats:
+            row["execution_energy_share"] = stats["execution_energy_share"]
+            row["transmission_energy_share"] = stats["transmission_energy_share"]
+            row["idle_energy_share"] = stats.get("idle_energy_share", 0.0)
+        rows.append(row)
     return sorted(rows, key=lambda r: r["probe_size_bytes"])
 
 
@@ -115,6 +127,37 @@ def plot_sweep(rows: List[Dict[str, Any]], out_path: Path) -> None:
     print(f"Saved: {out_path}")
 
 
+def plot_energy_pie(row: Dict[str, Any], out_path: Path) -> None:
+    """Draw a pie chart of energy share: processing, transmission, probing (and idle if present)."""
+    labels = []
+    sizes = []
+    colors = ["#2ecc71", "#3498db", "#e74c3c", "#95a5a6"]  # green, blue, red, gray
+    if row.get("execution_energy_share", 0) > 0:
+        labels.append("Processing (CPU)")
+        sizes.append(row["execution_energy_share"])
+    if row.get("transmission_energy_share", 0) > 0:
+        labels.append("Transmission (tasks)")
+        sizes.append(row["transmission_energy_share"])
+    if row.get("probing_energy_share", 0) > 0:
+        labels.append("Probing")
+        sizes.append(row["probing_energy_share"])
+    idle = row.get("idle_energy_share", 0)
+    if idle > 0:
+        labels.append("Idle")
+        sizes.append(idle)
+    if not sizes:
+        print("No energy breakdown available for pie chart.", file=sys.stderr)
+        return
+    fig, ax = plt.subplots(figsize=(5, 4))
+    ax.pie(sizes, labels=labels, colors=colors[: len(sizes)], autopct="%1.1f%%", startangle=90)
+    ax.set_title(f"Energy share (probe size = {row['probe_size_bytes']} B)")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"Saved: {out_path}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Plot probe-sweep results: probing energy share and job success ratio vs packet size."
@@ -129,12 +172,15 @@ def main() -> None:
         "--out",
         type=Path,
         default=None,
-        help="Output figure path (default: <results-dir>/probe_sweep_graph.png).",
+        help="Output path for the double y-axis sweep figure (default: under _log/.../ONLY_WORKERS/).",
     )
     args = parser.parse_args()
 
     results_data = args.results_dir.resolve()
-    out_path = args.out if args.out is not None else results_data / "probe_sweep_graph.png"
+    base_log = results_data / "_log" / "learning" / "D_SARSA" / "ONLY_WORKERS"
+    out_path = (
+        args.out.resolve() if args.out is not None else base_log / "probe_sweep_graph.png"
+    )
     out_path = out_path.resolve()
 
     db_paths = find_probe_sweep_dbs(results_data)
@@ -152,6 +198,13 @@ def main() -> None:
         sys.exit(1)
 
     plot_sweep(rows, out_path)
+
+    # One pie chart per simulation, stored in that simulation's folder (next to log.db).
+    for row in rows:
+        if "execution_energy_share" not in row:
+            continue
+        sim_dir = row["db_path"].parent
+        plot_energy_pie(row, sim_dir / "energy_pie.png")
 
 
 if __name__ == "__main__":

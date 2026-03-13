@@ -137,6 +137,12 @@ class ServiceDataStorage:
                                                     node_uid integer,
                                                     energy_wh real
                                                 )''')
+        self._db_cur.execute('''CREATE TABLE worker_energy_breakdown (
+                                                    node_uid integer primary key,
+                                                    idle_wh real,
+                                                    execution_wh real,
+                                                    transmission_wh real
+                                                )''')
         self._db_cur.execute('''CREATE TABLE sim_config (
                                                     key text primary key,
                                                     value text
@@ -280,14 +286,23 @@ class ServiceDataStorage:
                 (key, value),
             )
 
-        # Before dumping the in-memory DB to disk, persist total probing energy per node.
+        # Before dumping the in-memory DB to disk, persist total probing energy
+        # and energy breakdown (idle / execution / transmission) per node.
         for node in self._nodes:
             try:
                 energy_wh = node.get_total_probing_energy_wh()
             except AttributeError:
-                # Backward compatibility if older Node objects do not expose this.
-                continue
+                energy_wh = 0.0
             self.log_probing_energy(node.get_uid(), energy_wh)
+            try:
+                idle_wh = node.get_total_idle_energy_wh()
+                execution_wh = node.get_total_execution_energy_wh()
+                transmission_wh = node.get_total_transmission_energy_wh()
+                self.log_worker_energy_breakdown(
+                    node.get_uid(), idle_wh, execution_wh, transmission_wh
+                )
+            except AttributeError:
+                pass
 
         # Persist all pending changes in a single transaction before dumping to disk.
         self._db.commit()
@@ -362,3 +377,13 @@ class ServiceDataStorage:
                         {node_uid},
                         {energy_wh}
             )''')
+
+    def log_worker_energy_breakdown(
+        self, node_uid: int, idle_wh: float, execution_wh: float, transmission_wh: float
+    ) -> None:
+        """Persist per-node energy breakdown (idle / execution / transmission) in Wh."""
+        self._db_cur.execute(
+            '''INSERT OR REPLACE INTO worker_energy_breakdown
+               (node_uid, idle_wh, execution_wh, transmission_wh) VALUES (?, ?, ?, ?)''',
+            (node_uid, idle_wh, execution_wh, transmission_wh),
+        )
