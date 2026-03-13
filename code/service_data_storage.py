@@ -294,6 +294,9 @@ class ServiceDataStorage:
             except AttributeError:
                 energy_wh = 0.0
             self.log_probing_energy(node.get_uid(), energy_wh)
+            # Only workers have batteries and contribute to worker energy shares.
+            if node.get_type() != Node.NodeType.WORKER:
+                continue
             try:
                 idle_wh = node.get_total_idle_energy_wh()
                 execution_wh = node.get_total_execution_energy_wh()
