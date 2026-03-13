@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 import matplotlib.pyplot as plt
+from matplotlib.ticker import PercentFormatter
 
 # Import after potential path setup so we can run from repo root or code/
 import sys
@@ -85,18 +86,27 @@ def plot_sweep(rows: List[Dict[str, Any]], out_path: Path) -> None:
 
     # Left y-axis: probing energy share (red)
     ax_left.plot(x, share, color="red", marker="o", markersize=5, label="Probing energy share")
-    ax_left.set_xlabel("Probing packet size [bytes]")
-    ax_left.set_ylabel("Probing energy share", color="red")
+    ax_left.set_xlabel("Probing packet size [bytes] (log scale)")
+    ax_left.set_ylabel("Probing energy share [%]", color="red")
     ax_left.tick_params(axis="y", labelcolor="red")
-    ax_left.set_ylim(0, max(share) * 1.05 if share else 1.0)
-    ax_left.grid(True, alpha=0.3)
+    ax_left.set_ylim(0, (max(share) * 1.05 if share else 1.0))
+    ax_left.yaxis.set_major_formatter(PercentFormatter(xmax=1.0))
+    ax_left.grid(True, which="both", axis="both", alpha=0.3)
+
+    # Logarithmic scale on x-axis to match geometric probe-size sweep.
+    ax_left.set_xscale("log")
+    # Force ticks exactly at the simulated probe sizes so their values are
+    # clearly readable on the log axis.
+    ax_left.set_xticks(x)
+    ax_left.set_xticklabels([str(v) for v in x])
 
     # Right y-axis: job success ratio (green)
     ax_right = ax_left.twinx()
     ax_right.plot(x, success, color="green", marker="s", markersize=5, label="Job success ratio")
-    ax_right.set_ylabel("Job success ratio", color="green")
+    ax_right.set_ylabel("Job success ratio [%]", color="green")
     ax_right.tick_params(axis="y", labelcolor="green")
     ax_right.set_ylim(0, 1.05)
+    ax_right.yaxis.set_major_formatter(PercentFormatter(xmax=1.0))
 
     plt.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
