@@ -49,6 +49,13 @@ def compute_stats(db_path: Path) -> Dict[str, Any]:
         cur.execute("SELECT COALESCE(SUM(over_deadline), 0) FROM jobs;")
         (over_deadline_jobs,) = cur.fetchone()
 
+        # Jobs that were executed and not over deadline: our notion of "successful" jobs.
+        cur.execute(
+            "SELECT COALESCE(SUM(CASE WHEN executed = 1 AND over_deadline = 0 "
+            "THEN 1 ELSE 0 END), 0) FROM jobs;"
+        )
+        (successful_jobs,) = cur.fetchone()
+
         # Basic timing window (simulation span) using generation and end-to-end time_total.
         # time_total is the Job.get_total_time(), so end_time ~= generated_at + time_total.
         cur.execute(
@@ -124,6 +131,10 @@ def compute_stats(db_path: Path) -> Dict[str, Any]:
             "executed_jobs": int(executed_jobs),
             "rejected_jobs": int(rejected_jobs),
             "over_deadline_jobs": int(over_deadline_jobs),
+            "successful_jobs": int(successful_jobs),
+            "job_success_ratio": (
+                float(successful_jobs) / float(total_jobs) if total_jobs > 0 else 0.0
+            ),
             "over_deadline_ratio_all": (
                 float(over_deadline_jobs) / float(total_jobs) if total_jobs > 0 else 0.0
             ),
@@ -188,8 +199,14 @@ def main() -> None:
     print(f"- total_jobs: {stats['total_jobs']}")
     print(f"- executed_jobs: {stats['executed_jobs']}")
     print(f"- rejected_jobs: {stats['rejected_jobs']}")
-    print(f"- over_deadline_jobs: {stats['over_deadline_jobs']} "
-          f"({stats['over_deadline_ratio_all'] * 100:.2f}% of all jobs)")
+    print(
+        f"- over_deadline_jobs: {stats['over_deadline_jobs']} "
+        f"({stats['over_deadline_ratio_all'] * 100:.2f}% of all jobs)"
+    )
+    print(
+        f"- successful_jobs: {stats['successful_jobs']} "
+        f"({stats['job_success_ratio'] * 100:.2f}% of all jobs)"
+    )
     print(f"- sim_span_s: {stats['sim_span_s']:.2f}")
     print(f"- effective_fps (executed_jobs / sim_span_s): {stats['effective_fps']:.3f}")
 
