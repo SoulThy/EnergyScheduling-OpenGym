@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import multiprocessing
 import os
+import random
 from datetime import datetime
 import datetime as dt
 from typing import List
@@ -28,6 +29,10 @@ SESSION_ID = datetime.now().strftime("%Y%m%d")
 # other runners; imports of Node, SolarPanelSpec, build_simulator are delayed
 # until inside the child processes.
 ALPHA = 0.50
+
+# Fixed seed so all runs in the sweep use the same random sequence; only probe
+# size changes, making the curve comparable and avoiding run-to-run flicker.
+RANDOM_SEED: int = 42
 
 # ---------------------------------------------------------------------------
 # Probe-size sweep configuration
@@ -66,6 +71,11 @@ def run_simulation_for_probe_size(step_index: int, probe_size_bytes: int) -> Non
     that depend on `config`, so that the probing energy model and sim_config
     metadata are consistent for this run.
     """
+    # Seed first so nothing before this can affect reproducibility.
+    random.seed(RANDOM_SEED)
+    import numpy as np
+    np.random.seed(RANDOM_SEED)
+
     # Configure probe size for this child process before importing simulator modules.
     os.environ["PROBE_SIZE_BYTES"] = str(probe_size_bytes)
 
@@ -179,6 +189,10 @@ def run_simulation_for_probe_size(step_index: int, probe_size_bytes: int) -> Non
         solar_panel_spec_by_node_id=solar_panel_spec_by_node_id if SOLAR_PANEL_ENABLED else None,
     )
 
+    # Re-seed immediately before the run so the simulation sees a deterministic sequence
+    # (imports/build may have consumed some random numbers).
+    random.seed(RANDOM_SEED)
+    np.random.seed(RANDOM_SEED)
     env.run(until=SIMULATION_TOTAL_TIME)
     Log.minfo(
         MODULE,
