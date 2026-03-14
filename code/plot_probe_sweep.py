@@ -98,7 +98,7 @@ def plot_sweep(rows: List[Dict[str, Any]], out_path: Path) -> None:
 
     # Left y-axis: probing energy share (red)
     ax_left.plot(x, share, color="red", marker="o", markersize=5, label="Probing energy share")
-    ax_left.set_xlabel("Probing packet size [bytes] (log scale)")
+    ax_left.set_xlabel("Probing packet size (log scale)")
     ax_left.set_ylabel("Probing energy share [%]", color="red")
     ax_left.tick_params(axis="y", labelcolor="red")
     ax_left.set_ylim(0, (max(share) * 1.05 if share else 1.0))
@@ -107,10 +107,13 @@ def plot_sweep(rows: List[Dict[str, Any]], out_path: Path) -> None:
 
     # Logarithmic scale on x-axis to match geometric probe-size sweep.
     ax_left.set_xscale("log")
-    # Force ticks exactly at the simulated probe sizes so their values are
-    # clearly readable on the log axis.
+    # Force ticks exactly at the simulated probe sizes; show >= 10000 as KB, else as B.
     ax_left.set_xticks(x)
-    ax_left.set_xticklabels([str(v) for v in x])
+    ax_left.set_xticklabels(
+        [f"{v // 1000} KB" if v >= 10000 else f"{v} B" for v in x],
+        rotation=45,
+        ha="right",
+    )
 
     # Right y-axis: job success ratio (green)
     ax_right = ax_left.twinx()
@@ -127,16 +130,22 @@ def plot_sweep(rows: List[Dict[str, Any]], out_path: Path) -> None:
     print(f"Saved: {out_path}")
 
 
+def _format_probe_size(probe_bytes: int) -> str:
+    """Format probe size as 'N B' or 'N KB' for display (>= 10000 bytes -> KB)."""
+    return f"{probe_bytes // 1000} KB" if probe_bytes >= 10000 else f"{probe_bytes} B"
+
+
 def plot_energy_pie(row: Dict[str, Any], out_path: Path) -> None:
-    """Draw a pie chart of energy share: processing, transmission, probing (and idle if present)."""
+    """Draw a minimal pie chart of energy share: processing, transmission, probing (and idle)."""
     labels = []
     sizes = []
-    colors = ["#2ecc71", "#3498db", "#e74c3c", "#95a5a6"]  # green, blue, red, gray
+    # Soft, minimal palette: processing, transmission, probing, idle
+    colors = ["#5b9bd5", "#70ad47", "#ed7d31", "#a5a5a5"]
     if row.get("execution_energy_share", 0) > 0:
-        labels.append("Processing (CPU)")
+        labels.append("Processing")
         sizes.append(row["execution_energy_share"])
     if row.get("transmission_energy_share", 0) > 0:
-        labels.append("Transmission (tasks)")
+        labels.append("Transmission")
         sizes.append(row["transmission_energy_share"])
     if row.get("probing_energy_share", 0) > 0:
         labels.append("Probing")
@@ -148,11 +157,25 @@ def plot_energy_pie(row: Dict[str, Any], out_path: Path) -> None:
     if not sizes:
         print("No energy breakdown available for pie chart.", file=sys.stderr)
         return
-    fig, ax = plt.subplots(figsize=(5, 4))
-    ax.pie(sizes, labels=labels, colors=colors[: len(sizes)], autopct="%1.1f%%", startangle=90)
-    ax.set_title(f"Energy share (probe size = {row['probe_size_bytes']} B)")
+    fig, ax = plt.subplots(figsize=(4, 4))
+    wedgeprops = {"linewidth": 1.0, "edgecolor": "white"}
+    textprops = {"size": 10, "color": "#333333"}
+    ax.pie(
+        sizes,
+        labels=labels,
+        colors=colors[: len(sizes)],
+        autopct="%1.1f%%",
+        startangle=90,
+        wedgeprops=wedgeprops,
+        textprops=textprops,
+        pctdistance=0.75,
+        labeldistance=1.05,
+    )
+    probe_str = _format_probe_size(row["probe_size_bytes"])
+    ax.set_title(f"Energy share — {probe_str}", fontsize=11, color="#444444")
+    ax.set_axis_off()
+    plt.tight_layout(pad=0.5)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.tight_layout()
     plt.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"Saved: {out_path}")
