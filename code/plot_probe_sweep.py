@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 import matplotlib.pyplot as plt
-from matplotlib.ticker import PercentFormatter
+from matplotlib.ticker import MultipleLocator, PercentFormatter
 
 # Import after potential path setup so we can run from repo root or code/
 import sys
@@ -115,12 +115,17 @@ def plot_sweep(rows: List[Dict[str, Any]], out_path: Path) -> None:
         ha="right",
     )
 
-    # Right y-axis: job success ratio (green)
+    # Right y-axis: job success ratio (green), zoomed to data range, ticks every 2%
     ax_right = ax_left.twinx()
     ax_right.plot(x, success, color="green", marker="s", markersize=5, label="Job success ratio")
     ax_right.set_ylabel("Job success ratio [%]", color="green")
     ax_right.tick_params(axis="y", labelcolor="green")
-    ax_right.set_ylim(0, 1.05)
+    if success:
+        pad = max(0.02, (max(success) - min(success)) * 0.3)
+        ax_right.set_ylim(max(0, min(success) - pad), min(1.05, max(success) + pad))
+    else:
+        ax_right.set_ylim(0, 1.05)
+    ax_right.yaxis.set_major_locator(MultipleLocator(0.02))  # 2% steps for zoomed view
     ax_right.yaxis.set_major_formatter(PercentFormatter(xmax=1.0))
 
     plt.tight_layout()
