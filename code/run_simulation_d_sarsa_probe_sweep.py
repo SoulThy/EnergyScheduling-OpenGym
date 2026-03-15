@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import multiprocessing
 import os
+import random
 from datetime import datetime
 import datetime as dt
 from typing import List
@@ -28,6 +29,11 @@ SESSION_ID = datetime.now().strftime("%Y%m%d")
 # other runners; imports of Node, SolarPanelSpec, build_simulator are delayed
 # until inside the child processes.
 ALPHA = 0.50
+
+# Base seed for reproducibility. We run N_SEEDS per probe size and average in the plot
+# to smooth the curve (multiple seeds reduce flicker from discrete event effects).
+RANDOM_SEED: int = 42
+N_SEEDS: int = 3  # number of seeds per probe size (1 = single run, no averaging)
 
 # ---------------------------------------------------------------------------
 # Probe-size sweep configuration
@@ -58,14 +64,21 @@ def get_die_after(node_id: int) -> int:
     return 0
 
 
-def run_simulation_for_probe_size(step_index: int, probe_size_bytes: int) -> None:
+def run_simulation_for_probe_size(
+    step_index: int, probe_size_bytes: int, seed_index: int = 0
+) -> None:
     """
-    Run a single simulation for a given probing packet size.
+    Run a single simulation for a given probing packet size and seed index.
 
     We set PROBE_SIZE_BYTES via the environment before importing any modules
     that depend on `config`, so that the probing energy model and sim_config
     metadata are consistent for this run.
     """
+    seed = RANDOM_SEED + seed_index
+    random.seed(seed)
+    import numpy as np
+    np.random.seed(seed)
+
     # Configure probe size for this child process before importing simulator modules.
     os.environ["PROBE_SIZE_BYTES"] = str(probe_size_bytes)
 
@@ -75,8 +88,12 @@ def run_simulation_for_probe_size(step_index: int, probe_size_bytes: int) -> Non
     from node import Node
     from sim_builder import build_simulator
 
-    # Derive a descriptive session id that encodes alpha and probe size.
-    session_id = f"{SESSION_ID}_{ALPHA:.2f}_{probe_size_bytes}B_PS"
+    # Derive a descriptive session id (include seed index when N_SEEDS > 1).
+    session_id = (
+        f"{SESSION_ID}_{ALPHA:.2f}_{probe_size_bytes}B_PS_s{seed_index}"
+        if N_SEEDS > 1
+        else f"{SESSION_ID}_{ALPHA:.2f}_{probe_size_bytes}B_PS"
+    )
 
     # Solar panel specs (copied from other D-SARSA runners for consistency).
     tilt_list = [i for i in range(0, 72, 8)]
@@ -179,6 +196,9 @@ def run_simulation_for_probe_size(step_index: int, probe_size_bytes: int) -> Non
         solar_panel_spec_by_node_id=solar_panel_spec_by_node_id if SOLAR_PANEL_ENABLED else None,
     )
 
+    # Re-seed immediately before the run so the simulation sees a deterministic sequence.
+    random.seed(seed)
+    np.random.seed(seed)
     env.run(until=SIMULATION_TOTAL_TIME)
     Log.minfo(
         MODULE,
@@ -197,13 +217,16 @@ if __name__ == "__main__":
     num_cores = int(os.getenv("MAX_PARALLEL_SIMULATIONS", "4"))
 
     processes: list[multiprocessing.Process] = []
+    task_index = 0
     for step_index, probe_size in enumerate(PROBE_SIZES_BYTES):
-        p = multiprocessing.Process(
-            target=run_simulation_for_probe_size,
-            args=(step_index, probe_size),
-        )
-        processes.append(p)
-        p.start()
+        for seed_index in range(N_SEEDS):
+            p = multiprocessing.Process(
+                target=run_simulation_for_probe_size,
+                args=(task_index, probe_size, seed_index),
+            )
+            processes.append(p)
+            p.start()
+            task_index += 1
 
         if len(processes) >= num_cores:
             for proc in processes:

@@ -97,6 +97,31 @@ def compute_stats(db_path: Path) -> Dict[str, Any]:
             (total_probing_energy_wh / total_battery_capacity_wh) if total_battery_capacity_wh > 0 else 0.0
         )
 
+        # Energy breakdown: idle / execution / transmission (worker_energy_breakdown).
+        total_idle_wh = 0.0
+        total_execution_wh = 0.0
+        total_transmission_wh = 0.0
+        try:
+            cur.execute(
+                "SELECT node_uid, idle_wh, execution_wh, transmission_wh FROM worker_energy_breakdown;"
+            )
+            for _uid, idle_wh, execution_wh, transmission_wh in cur.fetchall():
+                total_idle_wh += float(idle_wh or 0.0)
+                total_execution_wh += float(execution_wh or 0.0)
+                total_transmission_wh += float(transmission_wh or 0.0)
+        except sqlite3.OperationalError:
+            pass
+
+        execution_energy_share = (
+            (total_execution_wh / total_battery_capacity_wh) if total_battery_capacity_wh > 0 else 0.0
+        )
+        transmission_energy_share = (
+            (total_transmission_wh / total_battery_capacity_wh) if total_battery_capacity_wh > 0 else 0.0
+        )
+        idle_energy_share = (
+            (total_idle_wh / total_battery_capacity_wh) if total_battery_capacity_wh > 0 else 0.0
+        )
+
         # ----------------------------------------------------------------------------
         # Expected average job size (MB) under default arrival rates
         # ----------------------------------------------------------------------------
@@ -149,6 +174,12 @@ def compute_stats(db_path: Path) -> Dict[str, Any]:
             "total_probing_energy_wh": total_probing_energy_wh,
             "total_battery_capacity_wh": total_battery_capacity_wh,
             "probing_energy_share": probing_energy_share,
+            "total_idle_wh": total_idle_wh,
+            "total_execution_wh": total_execution_wh,
+            "total_transmission_wh": total_transmission_wh,
+            "execution_energy_share": execution_energy_share,
+            "transmission_energy_share": transmission_energy_share,
+            "idle_energy_share": idle_energy_share,
         }
     finally:
         conn.close()
@@ -235,6 +266,19 @@ def main() -> None:
             f"- probing_energy_share: {stats['probing_energy_share'] * 100:.4f}% "
             "(total_probing_energy / sum_worker_capacities)"
         )
+        if "execution_energy_share" in stats:
+            print(
+                f"- execution_energy_share: {stats['execution_energy_share'] * 100:.4f}% "
+                "(CPU processing)"
+            )
+            print(
+                f"- transmission_energy_share: {stats['transmission_energy_share'] * 100:.4f}% "
+                "(sending tasks)"
+            )
+            print(
+                f"- idle_energy_share: {stats['idle_energy_share'] * 100:.4f}% "
+                "(idle 1 s per round)"
+            )
     else:
         print("- probing_energy: n/a (no probing_energy table in this log.db)")
 
