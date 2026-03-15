@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """
-Plot probing-energy share and job success ratio vs probing packet size
-from a probe-size sweep (run_simulation_d_sarsa_probe_sweep.py).
+Plot probing energy share vs probing packet size from a probe-size sweep
+(run_simulation_d_sarsa_probe_sweep.py).
 
 Finds all log.db under results/data/_log/learning/D_SARSA/ONLY_WORKERS/*B_PS/,
 calls log_simulation_db.compute_stats() on each, and produces:
-- One double y-axis figure (probing energy share + job success ratio vs probe size)
+- One figure (probing energy share vs probe size, single y-axis)
   stored under _log (e.g. .../ONLY_WORKERS/probe_sweep_graph.png).
+- One stacked-bar figure (composition of consumption: idle, processing, transmission, probing)
+  per probe size (probe_sweep_breakdown.png), to show why probing share stays small.
+- One figure (probe_energy_components.png): crossfactor vs packet-transmission share of
+  per-probe energy vs probe size, to show who dominates at which sizes.
 - One pie chart of energy share (processing / transmission / probing) per simulation,
   stored in each simulation folder next to its log.db (e.g. .../200B_PS/energy_pie.png).
 
@@ -29,7 +33,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 import matplotlib.pyplot as plt
-from matplotlib.ticker import MultipleLocator, PercentFormatter
+from matplotlib.ticker import PercentFormatter
 
 # Import after potential path setup so we can run from repo root or code/
 import sys
@@ -120,55 +124,145 @@ def load_sweep_stats(
 
 
 def plot_sweep(rows: List[Dict[str, Any]], out_path: Path) -> None:
-    """Draw probing_energy_share and job_success_ratio vs probe size (means, optional error bars)."""
+    """Draw probing energy share vs probe size (means, optional error bars). Single y-axis only."""
     if not rows:
         print("No data to plot.", file=sys.stderr)
         return
 
     x = [r["probe_size_bytes"] for r in rows]
     share = [r["probing_energy_share"] for r in rows]
-    success = [r["job_success_ratio"] for r in rows]
     share_std = [r.get("probing_energy_share_std", 0) for r in rows]
-    success_std = [r.get("job_success_ratio_std", 0) for r in rows]
 
-    fig, ax_left = plt.subplots(figsize=(6, 4))
+    fig, ax = plt.subplots(figsize=(6, 4))
 
-    # Left y-axis: probing energy share (red)
-    ax_left.plot(x, share, color="red", marker="o", markersize=5, label="Probing energy share")
+    ax.plot(x, share, color="red", marker="o", markersize=5, label="Probing energy share")
     if any(share_std):
-        ax_left.fill_between(x, [s - std for s, std in zip(share, share_std)], [s + std for s, std in zip(share, share_std)], color="red", alpha=0.2)
-    ax_left.set_xlabel("Probing packet size (log scale)")
-    ax_left.set_ylabel("Probing energy share [%]", color="red")
-    ax_left.tick_params(axis="y", labelcolor="red")
-    ax_left.set_ylim(0, (max(share) * 1.05 if share else 1.0))
-    ax_left.yaxis.set_major_formatter(PercentFormatter(xmax=1.0))
-    ax_left.grid(True, which="both", axis="both", alpha=0.3)
+        ax.fill_between(
+            x,
+            [s - std for s, std in zip(share, share_std)],
+            [s + std for s, std in zip(share, share_std)],
+            color="red",
+            alpha=0.2,
+        )
+    ax.set_xlabel("Probing packet size (log scale)")
+    ax.set_ylabel("Probing energy share [%]", color="red")
+    ax.tick_params(axis="y", labelcolor="red")
+    ax.set_ylim(0, (max(share) * 1.05 if share else 1.0))
+    ax.yaxis.set_major_formatter(PercentFormatter(xmax=1.0))
+    ax.grid(True, which="both", axis="both", alpha=0.3)
 
-    # Logarithmic scale on x-axis to match geometric probe-size sweep.
-    ax_left.set_xscale("log")
-    # Force ticks exactly at the simulated probe sizes; show >= 10000 as KB, else as B.
-    ax_left.set_xticks(x)
-    ax_left.set_xticklabels(
+    ax.set_xscale("log")
+    ax.set_xticks(x)
+    ax.set_xticklabels(
         [f"{v // 1000} KB" if v >= 10000 else f"{v} B" for v in x],
         rotation=45,
         ha="right",
     )
 
-    # Right y-axis: job success ratio (green), zoomed to data range, ticks every 2%
-    ax_right = ax_left.twinx()
-    ax_right.plot(x, success, color="green", marker="s", markersize=5, label="Job success ratio")
-    if any(success_std):
-        ax_right.fill_between(x, [s - std for s, std in zip(success, success_std)], [s + std for s, std in zip(success, success_std)], color="green", alpha=0.2)
-    ax_right.set_ylabel("Job success ratio [%]", color="green")
-    ax_right.tick_params(axis="y", labelcolor="green")
-    if success:
-        pad = max(0.02, (max(success) - min(success)) * 0.3)
-        ax_right.set_ylim(max(0, min(success) - pad), min(1.05, max(success) + pad))
-    else:
-        ax_right.set_ylim(0, 1.05)
-    ax_right.yaxis.set_major_locator(MultipleLocator(0.02))  # 2% steps for zoomed view
-    ax_right.yaxis.set_major_formatter(PercentFormatter(xmax=1.0))
+    plt.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"Saved: {out_path}")
 
+
+def plot_sweep_breakdown(rows: List[Dict[str, Any]], out_path: Path) -> None:
+    """Stacked bar: composition of energy consumption (idle, processing, transmission, probing)
+    per probe size. Shows why probing share stays small despite 510× larger packets:
+    consumption is dominated by processing and idle."""
+    has_breakdown = rows and "execution_energy_share" in rows[0]
+    if not has_breakdown:
+        return
+
+    x = [r["probe_size_bytes"] for r in rows]
+    x_pos = list(range(len(x)))
+    idle = [r.get("idle_energy_share", 0) for r in rows]
+    exec_ = [r.get("execution_energy_share", 0) for r in rows]
+    trans = [r.get("transmission_energy_share", 0) for r in rows]
+    probe = [r.get("probing_energy_share", 0) for r in rows]
+
+    # Normalize to 100% (share of total consumption) so stacked bar sums to 1
+    total = [idle[i] + exec_[i] + trans[i] + probe[i] for i in range(len(rows))]
+    if not all(t > 0 for t in total):
+        return
+    idle_n = [idle[i] / total[i] for i in range(len(rows))]
+    exec_n = [exec_[i] / total[i] for i in range(len(rows))]
+    trans_n = [trans[i] / total[i] for i in range(len(rows))]
+    probe_n = [probe[i] / total[i] for i in range(len(rows))]
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+    width = 0.7
+    ax.bar(x_pos, idle_n, width, label="Idle", color="#a5a5a5")
+    ax.bar(x_pos, exec_n, width, bottom=idle_n, label="Processing", color="#5b9bd5")
+    bottom2 = [idle_n[i] + exec_n[i] for i in range(len(rows))]
+    ax.bar(x_pos, trans_n, width, bottom=bottom2, label="Transmission (jobs)", color="#70ad47")
+    bottom3 = [bottom2[i] + trans_n[i] for i in range(len(rows))]
+    ax.bar(x_pos, probe_n, width, bottom=bottom3, label="Probing", color="#ed7d31")
+
+    ax.set_ylabel("Share of energy consumption [%]")
+    ax.set_xlabel("Probing packet size")
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels(
+        [f"{v // 1000} KB" if v >= 10000 else f"{v} B" for v in x],
+        rotation=45,
+        ha="right",
+    )
+    ax.set_ylim(0, 1)
+    ax.yaxis.set_major_formatter(PercentFormatter(xmax=1.0))
+    ax.legend(loc="upper right", fontsize=9)
+    ax.set_title(
+        "Energy consumption dominated by processing and idle → probing share stays small"
+    )
+    plt.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"Saved: {out_path}")
+
+
+def plot_probe_energy_components(out_path: Path) -> None:
+    """Plot fraction of per-probe energy from crossfactor vs packet transmission vs probe size.
+    Uses same formula as config: E = P_TX * (S*8/R_link) + E_crossfactor. Shows who dominates."""
+    # Match config defaults (do not import config here to keep script standalone)
+    P_TX_W = 0.2
+    R_LINK_BIT_S = 1000.0 * 1e6  # 1000 Mbit/s
+    E_CROSSFACTOR_J = 0.0002  # 0.2 mJ
+
+    # Probe sizes: sweep range + larger to show crossover (~125 KB where E_tx = E_crossfactor)
+    probe_sizes_bytes = [
+        200, 400, 800, 1600, 3200, 6400, 12_800, 25_600, 51_200,
+        102_400, 128_000, 160_000, 200_000,
+    ]
+
+    e_crossfactor = E_CROSSFACTOR_J
+    e_tx_list = []
+    for s in probe_sizes_bytes:
+        time_s = (s * 8) / R_LINK_BIT_S
+        e_tx_list.append(P_TX_W * time_s)
+
+    total_list = [e_crossfactor + e_tx for e_tx in e_tx_list]
+    frac_crossfactor = [e_crossfactor / t for t in total_list]
+    frac_tx = [e_tx / t for e_tx, t in zip(e_tx_list, total_list)]
+
+    fig, ax = plt.subplots(figsize=(7, 4))
+    ax.plot(probe_sizes_bytes, [f * 100 for f in frac_crossfactor], color="#ed7d31",
+            marker="o", markersize=4, label="Crossfactor (0.2 mJ)")
+    ax.plot(probe_sizes_bytes, [f * 100 for f in frac_tx], color="#5b9bd5",
+            marker="s", markersize=4, label="Packet transmission (P_TX × time)")
+    ax.set_xscale("log")
+    ax.set_ylabel("Share of per-probe energy [%]")
+    ax.set_xlabel("Probing packet size [bytes]")
+    ax.set_ylim(0, 105)
+    ax.yaxis.set_major_formatter(PercentFormatter(decimals=0))
+    ax.set_xticks(probe_sizes_bytes)
+    ax.set_xticklabels(
+        [f"{v // 1000} KB" if v >= 1000 else f"{v} B" for v in probe_sizes_bytes],
+        rotation=45,
+        ha="right",
+    )
+    ax.legend(loc="center right")
+    ax.grid(True, alpha=0.3)
+    ax.set_title("Crossfactor vs packet transmission in per-probe energy (R_link = 1000 Mbit/s)")
     plt.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out_path, dpi=150, bbox_inches="tight")
@@ -267,6 +361,13 @@ def main() -> None:
         sys.exit(1)
 
     plot_sweep(rows, out_path)
+
+    # Stacked bar: why probing share stays small (consumption dominated by processing + idle).
+    breakdown_path = out_path.parent / "probe_sweep_breakdown.png"
+    plot_sweep_breakdown(rows, breakdown_path)
+
+    # Crossfactor vs packet transmission: who dominates per-probe energy at each size.
+    plot_probe_energy_components(out_path.parent / "probe_energy_components.png")
 
     # One pie chart per simulation run, stored in that run's folder (next to log.db).
     for db_path in db_paths:
