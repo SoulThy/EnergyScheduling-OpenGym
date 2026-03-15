@@ -40,13 +40,13 @@ from log_simulation_db import compute_stats
 
 
 def find_probe_sweep_dbs(results_data: Path) -> List[Path]:
-    """Return list of log.db paths from probe-sweep runs (*B_PS session ids)."""
+    """Return list of log.db paths from probe-sweep runs (dirs containing B_PS, e.g. 200B_PS or 200B_PS_s0)."""
     base = results_data / "_log" / "learning" / "D_SARSA" / "ONLY_WORKERS"
     if not base.exists():
         return []
     dbs: List[Path] = []
     for d in base.iterdir():
-        if not d.is_dir() or not d.name.endswith("B_PS"):
+        if not d.is_dir() or "B_PS" not in d.name:
             continue
         db = d / "log.db"
         if db.exists():
@@ -54,9 +54,11 @@ def find_probe_sweep_dbs(results_data: Path) -> List[Path]:
     return dbs
 
 
-def load_sweep_stats(db_paths: List[Path]) -> List[Dict[str, Any]]:
-    """Load compute_stats for each db; return list of stats dicts with probe_size_bytes."""
-    rows: List[Dict[str, Any]] = []
+def load_sweep_stats(
+    db_paths: List[Path], aggregate_seeds: bool = True
+) -> List[Dict[str, Any]]:
+    """Load compute_stats for each db. If aggregate_seeds, group by probe size and average."""
+    raw: List[Dict[str, Any]] = []
     for db_path in db_paths:
         try:
             stats = compute_stats(db_path)
@@ -80,12 +82,45 @@ def load_sweep_stats(db_paths: List[Path]) -> List[Dict[str, Any]]:
             row["execution_energy_share"] = stats["execution_energy_share"]
             row["transmission_energy_share"] = stats["transmission_energy_share"]
             row["idle_energy_share"] = stats.get("idle_energy_share", 0.0)
-        rows.append(row)
-    return sorted(rows, key=lambda r: r["probe_size_bytes"])
+        raw.append(row)
+
+    if not aggregate_seeds or not raw:
+        return sorted(raw, key=lambda r: (r["probe_size_bytes"], str(r["db_path"])))
+
+    # Group by probe_size_bytes and average (smooths curve when N_SEEDS > 1).
+    from collections import defaultdict
+
+    by_size: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+    for r in raw:
+        by_size[r["probe_size_bytes"]].append(r)
+
+    aggregated: List[Dict[str, Any]] = []
+    for probe_bytes in sorted(by_size.keys()):
+        group = by_size[probe_bytes]
+        n = len(group)
+        agg = {
+            "probe_size_bytes": probe_bytes,
+            "probing_energy_share": sum(r["probing_energy_share"] for r in group) / n,
+            "job_success_ratio": sum(r["job_success_ratio"] for r in group) / n,
+            "db_path": group[0]["db_path"],
+        }
+        if "execution_energy_share" in group[0]:
+            agg["execution_energy_share"] = sum(r["execution_energy_share"] for r in group) / n
+            agg["transmission_energy_share"] = sum(r["transmission_energy_share"] for r in group) / n
+            agg["idle_energy_share"] = sum(r.get("idle_energy_share", 0) for r in group) / n
+        if n > 1:
+            agg["job_success_ratio_std"] = (
+                (sum(r["job_success_ratio"] ** 2 for r in group) / n - agg["job_success_ratio"] ** 2) ** 0.5
+            )
+            agg["probing_energy_share_std"] = (
+                (sum(r["probing_energy_share"] ** 2 for r in group) / n - agg["probing_energy_share"] ** 2) ** 0.5
+            )
+        aggregated.append(agg)
+    return aggregated
 
 
 def plot_sweep(rows: List[Dict[str, Any]], out_path: Path) -> None:
-    """Draw probing_energy_share and job_success_ratio vs probe size."""
+    """Draw probing_energy_share and job_success_ratio vs probe size (means, optional error bars)."""
     if not rows:
         print("No data to plot.", file=sys.stderr)
         return
@@ -93,11 +128,15 @@ def plot_sweep(rows: List[Dict[str, Any]], out_path: Path) -> None:
     x = [r["probe_size_bytes"] for r in rows]
     share = [r["probing_energy_share"] for r in rows]
     success = [r["job_success_ratio"] for r in rows]
+    share_std = [r.get("probing_energy_share_std", 0) for r in rows]
+    success_std = [r.get("job_success_ratio_std", 0) for r in rows]
 
     fig, ax_left = plt.subplots(figsize=(6, 4))
 
     # Left y-axis: probing energy share (red)
     ax_left.plot(x, share, color="red", marker="o", markersize=5, label="Probing energy share")
+    if any(share_std):
+        ax_left.fill_between(x, [s - std for s, std in zip(share, share_std)], [s + std for s, std in zip(share, share_std)], color="red", alpha=0.2)
     ax_left.set_xlabel("Probing packet size (log scale)")
     ax_left.set_ylabel("Probing energy share [%]", color="red")
     ax_left.tick_params(axis="y", labelcolor="red")
@@ -118,6 +157,8 @@ def plot_sweep(rows: List[Dict[str, Any]], out_path: Path) -> None:
     # Right y-axis: job success ratio (green), zoomed to data range, ticks every 2%
     ax_right = ax_left.twinx()
     ax_right.plot(x, success, color="green", marker="s", markersize=5, label="Job success ratio")
+    if any(success_std):
+        ax_right.fill_between(x, [s - std for s, std in zip(success, success_std)], [s + std for s, std in zip(success, success_std)], color="green", alpha=0.2)
     ax_right.set_ylabel("Job success ratio [%]", color="green")
     ax_right.tick_params(axis="y", labelcolor="green")
     if success:
@@ -227,12 +268,24 @@ def main() -> None:
 
     plot_sweep(rows, out_path)
 
-    # One pie chart per simulation, stored in that simulation's folder (next to log.db).
-    for row in rows:
-        if "execution_energy_share" not in row:
+    # One pie chart per simulation run, stored in that run's folder (next to log.db).
+    for db_path in db_paths:
+        try:
+            stats = compute_stats(db_path)
+        except Exception:
             continue
-        sim_dir = row["db_path"].parent
-        plot_energy_pie(row, sim_dir / "energy_pie.png")
+        if "execution_energy_share" not in stats:
+            continue
+        probe_bytes = int((stats.get("sim_config") or {}).get("PROBE_SIZE_BYTES", 0))
+        row = {
+            "probe_size_bytes": probe_bytes,
+            "probing_energy_share": stats["probing_energy_share"],
+            "job_success_ratio": stats["job_success_ratio"],
+            "execution_energy_share": stats["execution_energy_share"],
+            "transmission_energy_share": stats["transmission_energy_share"],
+            "idle_energy_share": stats.get("idle_energy_share", 0.0),
+        }
+        plot_energy_pie(row, db_path.parent / "energy_pie.png")
 
 
 if __name__ == "__main__":
