@@ -18,6 +18,9 @@ MAX_PARALLEL_SIMULATIONS: Final[int] = int(
     os.getenv("MAX_PARALLEL_SIMULATIONS", str(DEFAULT_MAX_PARALLEL_SIMULATIONS))
 )
 
+# High-level model selector (LEGACY, SMALL_JOBS_V2, ...).
+MODEL_VERSION: Final[str] = os.getenv("MODEL_VERSION", "LEGACY")
+
 
 def _parse_worker_battery_capacities(env_value: str | None) -> Tuple[int, int, int] | None:
     if not env_value:
@@ -85,7 +88,7 @@ POWER_MAX_TRANSMISSION_W: Final[float] = float(
 #   E_probe_J = P_tx * (probe_bits / (speed_bits_per_s)) + E_crossfactor_J
 # and we expose the equivalent in Wh for use in the battery model.
 
-PROBE_SIZE_BYTES: Final[int] = 200
+PROBE_SIZE_BYTES: Final[int] = int(os.getenv("PROBE_SIZE_BYTES", "200"))
 PROBE_CROSSFACTOR_J: Final[float] = 0.0002  # 0.2 mJ total (e.g., 0.1 mJ RX + 0.1 mJ TX)
 
 def _compute_default_probing_energy_cost_wh() -> float:

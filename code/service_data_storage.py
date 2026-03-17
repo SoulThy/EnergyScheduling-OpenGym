@@ -11,6 +11,15 @@ import sqlite3
 import time
 from typing import List
 
+from config import (
+    NET_SPEED_SCHEDULER_WORKER_MBIT,
+    POWER_MAX_TRANSMISSION_W,
+    PROBE_CROSSFACTOR_J,
+    PROBE_SIZE_BYTES,
+    PROBING_ENERGY_COST_WH,
+    WORKER_BATTERY_CAPACITIES,
+    MODEL_VERSION,
+)
 from job import Job
 from log import Log
 from node import Node
@@ -125,6 +134,20 @@ class ServiceDataStorage:
                                                     value real,
                                                     primary key (time, node_uid, state, action)
                                                 )''')
+        self._db_cur.execute('''CREATE TABLE probing_energy (
+                                                    node_uid integer,
+                                                    energy_wh real
+                                                )''')
+        self._db_cur.execute('''CREATE TABLE worker_energy_breakdown (
+                                                    node_uid integer primary key,
+                                                    idle_wh real,
+                                                    execution_wh real,
+                                                    transmission_wh real
+                                                )''')
+        self._db_cur.execute('''CREATE TABLE sim_config (
+                                                    key text primary key,
+                                                    value text
+                                                )''')
         self._db.commit()
         Log.minfo(MODULE, "DB init")
 
@@ -217,6 +240,145 @@ class ServiceDataStorage:
                                     {time}, "{state}", {node_uid}, {action}, {value})''')
 
     def done_simulation(self):
+        # Persist static simulation configuration so it can be inspected from log.db.
+        # These values are global for the run and independent of node.
+
+        # Try to infer representative job payload sizes from the scheduler node.
+        periodic_size_mb = None
+        exponential_size_mb = None
+        try:
+            scheduler_node = next(
+                node for node in self._nodes if node.get_type() == Node.NodeType.SCHEDULER
+            )
+        except StopIteration:
+            scheduler_node = None
+
+        periodic_durations = None
+        periodic_duration_std_devs = None
+        periodic_rates_fps = None
+        exponential_durations = None
+        exponential_duration_std_devs = None
+        exponential_rates_fps = None
+        machine_speeds = None
+        power_idle_w = None
+        power_cpu_w = None
+
+        if scheduler_node is not None:
+            try:
+                periodic_sizes = getattr(scheduler_node, "_job_periodic_payload_sizes_mbytes", None)
+                if periodic_sizes:
+                    periodic_size_mb = sum(periodic_sizes) / float(len(periodic_sizes))
+                exponential_sizes = getattr(
+                    scheduler_node, "_job_exponential_payload_sizes_mbytes", None
+                )
+                if exponential_sizes:
+                    exponential_size_mb = sum(exponential_sizes) / float(len(exponential_sizes))
+
+                periodic_durations = getattr(scheduler_node, "_job_periodic_durations", None)
+                periodic_duration_std_devs = getattr(
+                    scheduler_node, "_job_periodic_duration_std_devs", None
+                )
+                periodic_rates_fps = getattr(scheduler_node, "_job_periodic_rates_fps", None)
+
+                exponential_durations = getattr(scheduler_node, "_job_exponential_durations", None)
+                exponential_duration_std_devs = getattr(
+                    scheduler_node, "_job_exponential_duration_std_devs", None
+                )
+                exponential_rates_fps = getattr(scheduler_node, "_job_exponential_rates_fps", None)
+            except Exception:
+                periodic_size_mb = None
+                exponential_size_mb = None
+                periodic_durations = None
+                periodic_duration_std_devs = None
+                periodic_rates_fps = None
+                exponential_durations = None
+                exponential_duration_std_devs = None
+                exponential_rates_fps = None
+
+        try:
+            machine_speeds = ",".join(str(node._machine_speed) for node in self._nodes)  # type: ignore[attr-defined]
+        except Exception:
+            machine_speeds = None
+
+        try:
+            # Assume homogeneous power settings across nodes; read from the first node.
+            first_node = self._nodes[0]
+            power_idle_w = getattr(first_node, "_power_idle_w", None)
+            power_cpu_w = getattr(first_node, "_power_max_cpu_w", None)
+        except Exception:
+            power_idle_w = None
+            power_cpu_w = None
+
+        sim_config_values = {
+            "NET_SPEED_SCHEDULER_WORKER_MBIT": str(NET_SPEED_SCHEDULER_WORKER_MBIT),
+            "PROBE_SIZE_BYTES": str(PROBE_SIZE_BYTES),
+            "PROBE_CROSSFACTOR_J": str(PROBE_CROSSFACTOR_J),
+            "PROBING_ENERGY_COST_WH": str(PROBING_ENERGY_COST_WH),
+            "POWER_MAX_TRANSMISSION_W": str(POWER_MAX_TRANSMISSION_W),
+            "WORKER_BATTERY_CAPACITIES": ",".join(str(v) for v in WORKER_BATTERY_CAPACITIES),
+            # Tag to distinguish different workload / environment models in analysis.
+            "MODEL_VERSION": MODEL_VERSION,
+        }
+        if periodic_size_mb is not None:
+            sim_config_values["JOB_PERIODIC_PAYLOAD_SIZES_MB"] = ",".join(
+                str(v) for v in periodic_sizes  # type: ignore[name-defined]
+            )
+            sim_config_values["JOB_PERIODIC_PAYLOAD_SIZE_MB"] = str(periodic_size_mb)
+        if exponential_size_mb is not None:
+            sim_config_values["JOB_EXPONENTIAL_PAYLOAD_SIZES_MB"] = ",".join(
+                str(v) for v in exponential_sizes  # type: ignore[name-defined]
+            )
+            sim_config_values["JOB_EXPONENTIAL_PAYLOAD_SIZE_MB"] = str(exponential_size_mb)
+        if periodic_durations is not None:
+            sim_config_values["JOB_PERIODIC_DURATIONS_S"] = ",".join(str(v) for v in periodic_durations)
+        if periodic_duration_std_devs is not None:
+            sim_config_values["JOB_PERIODIC_DURATION_STD_DEVS_S"] = ",".join(
+                str(v) for v in periodic_duration_std_devs
+            )
+        if periodic_rates_fps is not None:
+            sim_config_values["JOB_PERIODIC_RATES_FPS"] = ",".join(str(v) for v in periodic_rates_fps)
+        if exponential_durations is not None:
+            sim_config_values["JOB_EXPONENTIAL_DURATIONS_S"] = ",".join(str(v) for v in exponential_durations)
+        if exponential_duration_std_devs is not None:
+            sim_config_values["JOB_EXPONENTIAL_DURATION_STD_DEVS_S"] = ",".join(
+                str(v) for v in exponential_duration_std_devs
+            )
+        if exponential_rates_fps is not None:
+            sim_config_values["JOB_EXPONENTIAL_RATES_FPS"] = ",".join(str(v) for v in exponential_rates_fps)
+        if machine_speeds is not None:
+            sim_config_values["NODE_MACHINE_SPEEDS"] = machine_speeds
+        if power_idle_w is not None:
+            sim_config_values["POWER_IDLE_W"] = str(power_idle_w)
+        if power_cpu_w is not None:
+            sim_config_values["POWER_MAX_CPU_W"] = str(power_cpu_w)
+
+        for key, value in sim_config_values.items():
+            self._db_cur.execute(
+                '''INSERT OR REPLACE INTO sim_config (key, value) VALUES (?, ?)''',
+                (key, value),
+            )
+
+        # Before dumping the in-memory DB to disk, persist total probing energy
+        # and energy breakdown (idle / execution / transmission) per node.
+        for node in self._nodes:
+            try:
+                energy_wh = node.get_total_probing_energy_wh()
+            except AttributeError:
+                energy_wh = 0.0
+            self.log_probing_energy(node.get_uid(), energy_wh)
+            # Only workers have batteries and contribute to worker energy shares.
+            if node.get_type() != Node.NodeType.WORKER:
+                continue
+            try:
+                idle_wh = node.get_total_idle_energy_wh()
+                execution_wh = node.get_total_execution_energy_wh()
+                transmission_wh = node.get_total_transmission_energy_wh()
+                self.log_worker_energy_breakdown(
+                    node.get_uid(), idle_wh, execution_wh, transmission_wh
+                )
+            except AttributeError:
+                pass
+
         # Persist all pending changes in a single transaction before dumping to disk.
         self._db.commit()
         self._copy_db_to_file()
@@ -282,3 +444,21 @@ class ServiceDataStorage:
                         {worker_id},
                         {max_battery}
             )''')
+
+    def log_probing_energy(self, node_uid: int, energy_wh: float) -> None:
+        """Persist total probing energy (Wh) for a node at the end of the simulation."""
+        self._db_cur.execute(
+            f'''INSERT INTO probing_energy VALUES (
+                        {node_uid},
+                        {energy_wh}
+            )''')
+
+    def log_worker_energy_breakdown(
+        self, node_uid: int, idle_wh: float, execution_wh: float, transmission_wh: float
+    ) -> None:
+        """Persist per-node energy breakdown (idle / execution / transmission) in Wh."""
+        self._db_cur.execute(
+            '''INSERT OR REPLACE INTO worker_energy_breakdown
+               (node_uid, idle_wh, execution_wh, transmission_wh) VALUES (?, ?, ?, ?)''',
+            (node_uid, idle_wh, execution_wh, transmission_wh),
+        )

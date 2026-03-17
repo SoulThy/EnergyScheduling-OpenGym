@@ -13,12 +13,12 @@ worker Nodes, ServiceDiscovery, and ServiceDataStorage, so that legacy runners
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, Iterable, Tuple, List
 
 import simpy
 
 from cloud import Cloud
-from config import WORKER_BATTERY_CAPACITIES
+from config import WORKER_BATTERY_CAPACITIES, MODEL_VERSION
 from config import (
     NET_SPEED_CLIENT_SCHEDULER_MBIT,
     NET_SPEED_SCHEDULER_CLOUD_MBIT,
@@ -27,6 +27,76 @@ from config import (
 from node import Node
 from service_data_storage import ServiceDataStorage
 from service_discovery import ServiceDiscovery
+
+# ---------------------------------------------------------------------------
+# Model presets for job parameters
+# ---------------------------------------------------------------------------
+#
+# The LEGACY preset reproduces the original D-SARSA thesis configuration.
+# SMALL_JOBS_V1 starts from the same values but is intended to be edited to
+# represent smaller, more frequent jobs with different FPS objectives.
+
+LEGACY_JOB_PARAMS = {
+    "periodic_payloads_mb": (0.050, 0.050, 0.050),
+    "periodic_duration_std_devs_s": (0.0003, 0.0003, 0.0003),
+    "periodic_percentages": (0.33, 0.33, 0.34),
+    "periodic_deadlines_s": (0.016, 0.033, 0.070),
+    "periodic_durations_s": (0.010, 0.020, 0.055),
+    "periodic_arrival_time_std_devs_s": (0.001, 0.002, 0.01),
+    "periodic_rates_fps": (60, 30, 15),
+    "periodic_desired_rates_fps": (60, 30, 15),
+    "periodic_desired_rates_max_fps": (60, 30, 15),
+    "periodic_desired_rates_min_fps": (50, 20, 10),
+    "exponential_payloads_mb": [0.1],
+    "exponential_duration_std_devs_s": [0.01],
+    "exponential_arrival_time_std_devs_s": [0.01],
+    "exponential_percentages": [1],
+    "exponential_deadlines_s": [0.300],
+    "exponential_durations_s": [0.100],
+    "exponential_rates_fps": [10],
+    "exponential_desired_rates_fps": [1],
+    "exponential_desired_rates_min_fps": [0],
+    "exponential_desired_rates_max_fps": [10],
+}
+
+SMALL_JOBS_V1_JOB_PARAMS = {
+    # NOTE: These start equal to LEGACY so you can safely edit them
+    # to represent your "small, more frequent jobs" model without
+    # accidentally changing the baseline.
+    #
+    # Example adjustments you might consider:
+    # - Decrease payloads_mb (smaller jobs on the wire).
+    # - Decrease durations_s and duration_std_devs_s (lighter compute).
+    # - Increase rates_fps / desired_rates_fps (higher target FPS).
+
+    "periodic_payloads_mb": (0.050, 0.050, 0.050),  # TODO: set smaller payloads, e.g. (0.020, 0.020, 0.020)
+    "periodic_duration_std_devs_s": (0.0003, 0.0003, 0.0003),  # TODO: scale with your new durations
+    "periodic_percentages": (0.33, 0.33, 0.34),
+    "periodic_deadlines_s": (0.016, 0.033, 0.070),  # TODO: update if FPS/deadline targets change
+    "periodic_durations_s": (0.010, 0.020, 0.055),  # TODO: set shorter execution times
+    "periodic_arrival_time_std_devs_s": (0.001, 0.002, 0.01),
+    "periodic_rates_fps": (60, 30, 15),  # TODO: increase for more frequent jobs
+    "periodic_desired_rates_fps": (60, 30, 15),
+    "periodic_desired_rates_max_fps": (60, 30, 15),
+    "periodic_desired_rates_min_fps": (50, 20, 10),
+    "exponential_payloads_mb": [0.1],  # TODO: set smaller exponential job sizes
+    "exponential_duration_std_devs_s": [0.01],  # TODO: scale with new durations
+    "exponential_arrival_time_std_devs_s": [0.01],
+    "exponential_percentages": [1],
+    "exponential_deadlines_s": [0.300],
+    "exponential_durations_s": [0.100],  # TODO: set shorter exponential execution time
+    "exponential_rates_fps": [10],  # TODO: increase for more frequent jobs
+    "exponential_desired_rates_fps": [1],
+    "exponential_desired_rates_min_fps": [0],
+    "exponential_desired_rates_max_fps": [10],
+}
+
+_JOB_PARAMS_BY_MODEL = {
+    "LEGACY": LEGACY_JOB_PARAMS,
+    "SMALL_JOBS_V1": SMALL_JOBS_V1_JOB_PARAMS,
+}
+
+CURRENT_JOB_PARAMS = _JOB_PARAMS_BY_MODEL.get(MODEL_VERSION, LEGACY_JOB_PARAMS)
 
 
 def build_simulator(
@@ -45,6 +115,8 @@ def build_simulator(
     solar_panel_spec_by_node_id: dict[int, object] | None = None,
     cloud_latency_roundtrip_ms: int = 20,
     gym_mode: bool = False,
+    job_periodic_payload_sizes_mbytes: Tuple[float, float, float] | None = None,
+    job_exponential_payload_sizes_mbytes: List[float] | None = None,
 ) -> tuple[simpy.Environment, list[Node], Cloud, ServiceDiscovery, ServiceDataStorage]:
     """
     Build the full simulator: SimPy env, Cloud, scheduler + 3 workers, discovery, data storage.
@@ -75,6 +147,12 @@ def build_simulator(
     if solar_panel_spec_by_node_id is None:
         solar_panel_spec_by_node_id = {}
 
+    # Fallback to legacy defaults if job sizes are not explicitly provided.
+    if job_periodic_payload_sizes_mbytes is None:
+        job_periodic_payload_sizes_mbytes = (0.050, 0.050, 0.050)
+    if job_exponential_payload_sizes_mbytes is None:
+        job_exponential_payload_sizes_mbytes = [0.1]
+
     env = simpy.Environment()
     cloud = Cloud(env, latency_roundtrip_ms=cloud_latency_roundtrip_ms)
     worker_batt_1, worker_batt_2, worker_batt_3 = WORKER_BATTERY_CAPACITIES
@@ -95,6 +173,8 @@ def build_simulator(
             solar_panel_enabled=solar_panel_enabled,
             solar_panel_spec=solar_panel_spec_by_node_id.get(0),
             gym_mode=gym_mode,
+            job_periodic_payload_sizes_mbytes=job_periodic_payload_sizes_mbytes,
+            job_exponential_payload_sizes_mbytes=job_exponential_payload_sizes_mbytes,
         )
     )
     nodes.append(
@@ -114,6 +194,8 @@ def build_simulator(
             solar_panel_enabled=solar_panel_enabled,
             solar_panel_spec=solar_panel_spec_by_node_id.get(1),
             machine_speed=1.8,
+            job_periodic_payload_sizes_mbytes=job_periodic_payload_sizes_mbytes,
+            job_exponential_payload_sizes_mbytes=job_exponential_payload_sizes_mbytes,
         )
     )
     nodes.append(
@@ -133,6 +215,8 @@ def build_simulator(
             solar_panel_enabled=solar_panel_enabled,
             solar_panel_spec=solar_panel_spec_by_node_id.get(2),
             machine_speed=1.7,
+            job_periodic_payload_sizes_mbytes=job_periodic_payload_sizes_mbytes,
+            job_exponential_payload_sizes_mbytes=job_exponential_payload_sizes_mbytes,
         )
     )
     nodes.append(
@@ -152,6 +236,8 @@ def build_simulator(
             solar_panel_enabled=solar_panel_enabled,
             solar_panel_spec=solar_panel_spec_by_node_id.get(3),
             machine_speed=1.4,
+            job_periodic_payload_sizes_mbytes=job_periodic_payload_sizes_mbytes,
+            job_exponential_payload_sizes_mbytes=job_exponential_payload_sizes_mbytes,
         )
     )
 
@@ -188,8 +274,11 @@ def _create_scheduler_node(
     solar_panel_enabled: bool = False,
     solar_panel_spec: object = None,
     gym_mode: bool = False,
+    job_periodic_payload_sizes_mbytes: Tuple[float, float, float] | None = None,
+    job_exponential_payload_sizes_mbytes: List[float] | None = None,
 ) -> Node:
     """Create scheduler node (node_id=0). Same kwargs as legacy create_node for scheduler."""
+    jp = CURRENT_JOB_PARAMS
     return Node(
         env,
         0,
@@ -215,27 +304,31 @@ def _create_scheduler_node(
         net_speed_scheduler_worker_mbits=NET_SPEED_SCHEDULER_WORKER_MBIT,
         net_speed_scheduler_cloud_mbits=NET_SPEED_SCHEDULER_CLOUD_MBIT,
         job_periodic_types=3,
-        job_periodic_payload_sizes_mbytes=(0.050, 0.050, 0.050),
-        job_periodic_duration_std_devs=(0.0003, 0.0003, 0.0003),
-        job_periodic_percentages=(0.33, 0.33, 0.34),
-        job_periodic_deadlines=(0.016, 0.033, 0.070),
-        job_periodic_durations=(0.010, 0.020, 0.055),
-        job_periodic_arrival_time_std_devs=(0.001, 0.002, 0.01),
-        job_periodic_rates_fps=(60, 30, 15),
-        job_periodic_desired_rates_fps=(60, 30, 15),
-        job_periodic_desired_rates_fps_max=(60, 30, 15),
-        job_periodic_desired_rates_fps_min=(50, 20, 10),
+        job_periodic_payload_sizes_mbytes=job_periodic_payload_sizes_mbytes
+        if job_periodic_payload_sizes_mbytes is not None
+        else jp["periodic_payloads_mb"],
+        job_periodic_duration_std_devs=jp["periodic_duration_std_devs_s"],
+        job_periodic_percentages=jp["periodic_percentages"],
+        job_periodic_deadlines=jp["periodic_deadlines_s"],
+        job_periodic_durations=jp["periodic_durations_s"],
+        job_periodic_arrival_time_std_devs=jp["periodic_arrival_time_std_devs_s"],
+        job_periodic_rates_fps=jp["periodic_rates_fps"],
+        job_periodic_desired_rates_fps=jp["periodic_desired_rates_fps"],
+        job_periodic_desired_rates_fps_max=jp["periodic_desired_rates_max_fps"],
+        job_periodic_desired_rates_fps_min=jp["periodic_desired_rates_min_fps"],
         job_exponential_types=1,
-        job_exponential_payload_sizes_mbytes=[0.1],
-        job_exponential_duration_std_devs=[0.01],
-        job_exponential_arrival_time_std_devs=[0.01],
-        job_exponential_percentages=[1],
-        job_exponential_deadlines=[0.300],
-        job_exponential_durations=[0.100],
-        job_exponential_rates_fps=[10],
-        job_exponential_desired_rates_fps=[1],
-        job_exponential_desired_rates_fps_min=[0],
-        job_exponential_desired_rates_fps_max=[10],
+        job_exponential_payload_sizes_mbytes=job_exponential_payload_sizes_mbytes
+        if job_exponential_payload_sizes_mbytes is not None
+        else jp["exponential_payloads_mb"],
+        job_exponential_duration_std_devs=jp["exponential_duration_std_devs_s"],
+        job_exponential_arrival_time_std_devs=jp["exponential_arrival_time_std_devs_s"],
+        job_exponential_percentages=jp["exponential_percentages"],
+        job_exponential_deadlines=jp["exponential_deadlines_s"],
+        job_exponential_durations=jp["exponential_durations_s"],
+        job_exponential_rates_fps=jp["exponential_rates_fps"],
+        job_exponential_desired_rates_fps=jp["exponential_desired_rates_fps"],
+        job_exponential_desired_rates_fps_min=jp["exponential_desired_rates_min_fps"],
+        job_exponential_desired_rates_fps_max=jp["exponential_desired_rates_max_fps"],
         max_jobs_in_queue=5,
         distribution_arrivals=Node.DistributionArrivals.POISSON,
         delay_probing=0.003,
@@ -279,8 +372,11 @@ def _create_worker_node(
     solar_panel_enabled: bool = False,
     solar_panel_spec: object = None,
     machine_speed: float = 1.0,
+    job_periodic_payload_sizes_mbytes: Tuple[float, float, float] | None = None,
+    job_exponential_payload_sizes_mbytes: List[float] | None = None,
 ) -> Node:
     """Create worker node. Same kwargs as legacy create_node for workers."""
+    jp = CURRENT_JOB_PARAMS
     return Node(
         env,
         node_id,
@@ -306,27 +402,31 @@ def _create_worker_node(
         net_speed_scheduler_worker_mbits=NET_SPEED_SCHEDULER_WORKER_MBIT,
         net_speed_scheduler_cloud_mbits=NET_SPEED_SCHEDULER_CLOUD_MBIT,
         job_periodic_types=3,
-        job_periodic_payload_sizes_mbytes=(0.050, 0.050, 0.050),
-        job_periodic_duration_std_devs=(0.0003, 0.0003, 0.0003),
-        job_periodic_percentages=(0.33, 0.33, 0.34),
-        job_periodic_deadlines=(0.016, 0.033, 0.070),
-        job_periodic_durations=(0.010, 0.020, 0.055),
-        job_periodic_arrival_time_std_devs=(0.001, 0.002, 0.01),
-        job_periodic_rates_fps=(60, 30, 15),
-        job_periodic_desired_rates_fps=(60, 30, 15),
-        job_periodic_desired_rates_fps_max=(60, 30, 15),
-        job_periodic_desired_rates_fps_min=(50, 20, 10),
+        job_periodic_payload_sizes_mbytes=job_periodic_payload_sizes_mbytes
+        if job_periodic_payload_sizes_mbytes is not None
+        else jp["periodic_payloads_mb"],
+        job_periodic_duration_std_devs=jp["periodic_duration_std_devs_s"],
+        job_periodic_percentages=jp["periodic_percentages"],
+        job_periodic_deadlines=jp["periodic_deadlines_s"],
+        job_periodic_durations=jp["periodic_durations_s"],
+        job_periodic_arrival_time_std_devs=jp["periodic_arrival_time_std_devs_s"],
+        job_periodic_rates_fps=jp["periodic_rates_fps"],
+        job_periodic_desired_rates_fps=jp["periodic_desired_rates_fps"],
+        job_periodic_desired_rates_fps_max=jp["periodic_desired_rates_max_fps"],
+        job_periodic_desired_rates_fps_min=jp["periodic_desired_rates_min_fps"],
         job_exponential_types=1,
-        job_exponential_payload_sizes_mbytes=[0.1],
-        job_exponential_duration_std_devs=[0.01],
-        job_exponential_arrival_time_std_devs=[0.01],
-        job_exponential_percentages=[1],
-        job_exponential_deadlines=[0.300],
-        job_exponential_durations=[0.100],
-        job_exponential_rates_fps=[10],
-        job_exponential_desired_rates_fps=[1],
-        job_exponential_desired_rates_fps_min=[0],
-        job_exponential_desired_rates_fps_max=[10],
+        job_exponential_payload_sizes_mbytes=job_exponential_payload_sizes_mbytes
+        if job_exponential_payload_sizes_mbytes is not None
+        else jp["exponential_payloads_mb"],
+        job_exponential_duration_std_devs=jp["exponential_duration_std_devs_s"],
+        job_exponential_arrival_time_std_devs=jp["exponential_arrival_time_std_devs_s"],
+        job_exponential_percentages=jp["exponential_percentages"],
+        job_exponential_deadlines=jp["exponential_deadlines_s"],
+        job_exponential_durations=jp["exponential_durations_s"],
+        job_exponential_rates_fps=jp["exponential_rates_fps"],
+        job_exponential_desired_rates_fps=jp["exponential_desired_rates_fps"],
+        job_exponential_desired_rates_fps_min=jp["exponential_desired_rates_min_fps"],
+        job_exponential_desired_rates_fps_max=jp["exponential_desired_rates_max_fps"],
         max_jobs_in_queue=5,
         distribution_arrivals=Node.DistributionArrivals.POISSON,
         delay_probing=0.003,

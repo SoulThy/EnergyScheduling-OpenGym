@@ -8,29 +8,38 @@ cd environment && docker build . --tag energysim && cd ..
 
 This recreates the computational environment locally and tags it as `energysim`.
 
-## Running simulations (with probing-aware parameters)
+## Running simulations (reproducible workflow)
 
-Use this command to start an interactive container configured with all key environment variables, including the ones relevant for probing experiments:
+### Select the workload model (jobs)
+
+We use a single environment variable to select the **job/workload model**:
+
+- `MODEL_VERSION=LEGACY`: original (baseline) workload.
+- `MODEL_VERSION=SMALL_JOBS_V1`: alternative workload preset (smaller/more frequent jobs). Values live in
+  `code/sim_builder.py` under `SMALL_JOBS_V1_JOB_PARAMS` and can be edited.
+
+The chosen model version and the full job parameters (payload sizes, deadlines, durations, std devs, FPS targets)
+are written into each run's `log.db` under the `sim_config` table by `ServiceDataStorage.done_simulation()`.
+
+### Start the container (minimal, safe defaults)
+
+Use this command to start an interactive container with the baseline hardware defaults and a selected workload model:
 
 ```shell
-docker run --platform linux/amd64 --rm -it \
-  --name energysim-sim \
-  --env MAX_PARALLEL_SIMULATIONS=2 \
-  --env WORKER_BATTERY_CAPACITIES=7,8,9 \
-  --env NET_SPEED_CLIENT_SCHEDULER_MBIT=10 \
-  --env NET_SPEED_SCHEDULER_WORKER_MBIT=20 \
-  --env NET_SPEED_SCHEDULER_CLOUD_MBIT=50 \
-  --env POWER_MAX_TRANSMISSION_W=0.5 \
-  --workdir /code \
-  --volume "$PWD/code":/code \
-  --volume "$PWD/results":/results \
-  energysim bash
+./run_docker_probing.sh
 ```
 
-- `MAX_PARALLEL_SIMULATIONS`: how many simulations can run in parallel.
-- `WORKER_BATTERY_CAPACITIES`: worker node battery capacities (Wh) as `n1,n2,n3`.
-- `NET_SPEED_*_MBIT`: effective link speeds (Mbit/s) for client→scheduler, scheduler→worker, and scheduler→cloud.
-- `POWER_MAX_TRANSMISSION_W`: radio transmission power (W); combined with `NET_SPEED_SCHEDULER_WORKER_MBIT` this also determines the per-probe energy cost.
+### Optional: override hardware/network parameters
+
+If you need to override the **hardware/platform side** (batteries, link speeds, radio power), you can still pass the
+existing env vars. This is optional and more error-prone, so prefer defaults unless you are intentionally exploring:
+
+- `WORKER_BATTERY_CAPACITIES` (Wh): `n1,n2,n3`
+- `NET_SPEED_CLIENT_SCHEDULER_MBIT`, `NET_SPEED_SCHEDULER_WORKER_MBIT`, `NET_SPEED_SCHEDULER_CLOUD_MBIT` (Mbit/s)
+- `POWER_MAX_TRANSMISSION_W` (W)
+- `PROBE_SIZE_BYTES` (bytes) and `PROBING_ENERGY_COST_WH` (Wh), if you want to control probing directly
+
+All of these are also written into `log.db` (`sim_config`) for reproducibility.
 
 Inside the container you can then run the usual scripts, for example:
 
