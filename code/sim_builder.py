@@ -69,24 +69,25 @@ SMALL_JOBS_V1_JOB_PARAMS = {
     # - Decrease durations_s and duration_std_devs_s (lighter compute).
     # - Increase rates_fps / desired_rates_fps (higher target FPS).
 
-    "periodic_payloads_mb": (0.050, 0.050, 0.050),  # TODO: set smaller payloads, e.g. (0.020, 0.020, 0.020)
-    "periodic_duration_std_devs_s": (0.0003, 0.0003, 0.0003),  # TODO: scale with your new durations
+    "periodic_payloads_mb": (0.00184, 0.00184, 0.00184),  # Legacy * 0.0368
+    "periodic_duration_std_devs_s": (0.000086, 0.000086, 0.000086), # Legacy * 0.285
     "periodic_percentages": (0.33, 0.33, 0.34),
-    "periodic_deadlines_s": (0.016, 0.033, 0.070),  # TODO: update if FPS/deadline targets change
-    "periodic_durations_s": (0.010, 0.020, 0.055),  # TODO: set shorter execution times
+    "periodic_deadlines_s": (0.016, 0.033, 0.070),  # TODO: change if we want stricter regime
+    "periodic_durations_s": (0.00285, 0.00570, 0.01568), # Legacy * 0.285
     "periodic_arrival_time_std_devs_s": (0.001, 0.002, 0.01),
-    "periodic_rates_fps": (60, 30, 15),  # TODO: increase for more frequent jobs
-    "periodic_desired_rates_fps": (60, 30, 15),
-    "periodic_desired_rates_max_fps": (60, 30, 15),
-    "periodic_desired_rates_min_fps": (50, 20, 10),
-    "exponential_payloads_mb": [0.1],  # TODO: set smaller exponential job sizes
-    "exponential_duration_std_devs_s": [0.01],  # TODO: scale with new durations
+    "periodic_rates_fps": (120, 60, 30), # Legacy * 2
+    "periodic_desired_rates_fps": (120, 60, 30), # Legacy * 2
+    "periodic_desired_rates_max_fps": (120, 60, 30), # Legacy * 2
+    "periodic_desired_rates_min_fps": (100, 40, 20),  # Legacy * 2
+
+    "exponential_payloads_mb": [0.00368],  # Legacy * 0.0368
+    "exponential_duration_std_devs_s": [0.00285], # Legacy * 0.285
     "exponential_arrival_time_std_devs_s": [0.01],
     "exponential_percentages": [1],
-    "exponential_deadlines_s": [0.300],
-    "exponential_durations_s": [0.100],  # TODO: set shorter exponential execution time
-    "exponential_rates_fps": [10],  # TODO: increase for more frequent jobs
-    "exponential_desired_rates_fps": [1],
+    "exponential_deadlines_s": [0.300], # TODO: change if we want stricter regime
+    "exponential_durations_s": [0.0285], # Legacy * 0.285
+    "exponential_rates_fps": [20], # Legacy * 2
+    "exponential_desired_rates_fps": [2], # Legacy * 2
     "exponential_desired_rates_min_fps": [0],
     "exponential_desired_rates_max_fps": [10],
 }
