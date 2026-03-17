@@ -18,6 +18,7 @@ from config import (
     PROBE_SIZE_BYTES,
     PROBING_ENERGY_COST_WH,
     WORKER_BATTERY_CAPACITIES,
+    MODEL_VERSION,
 )
 from job import Job
 from log import Log
@@ -316,7 +317,7 @@ class ServiceDataStorage:
             "POWER_MAX_TRANSMISSION_W": str(POWER_MAX_TRANSMISSION_W),
             "WORKER_BATTERY_CAPACITIES": ",".join(str(v) for v in WORKER_BATTERY_CAPACITIES),
             # Tag to distinguish different workload / environment models in analysis.
-            "MODEL_VERSION": os.getenv("MODEL_VERSION", "baseline_v1"),
+            "MODEL_VERSION": MODEL_VERSION,
         }
         if periodic_size_mb is not None:
             sim_config_values["JOB_PERIODIC_PAYLOAD_SIZES_MB"] = ",".join(

@@ -18,6 +18,9 @@ MAX_PARALLEL_SIMULATIONS: Final[int] = int(
     os.getenv("MAX_PARALLEL_SIMULATIONS", str(DEFAULT_MAX_PARALLEL_SIMULATIONS))
 )
 
+# High-level model selector (LEGACY, SMALL_JOBS_V2, ...).
+MODEL_VERSION: Final[str] = os.getenv("MODEL_VERSION", "LEGACY")
+
 
 def _parse_worker_battery_capacities(env_value: str | None) -> Tuple[int, int, int] | None:
     if not env_value:
