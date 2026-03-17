@@ -252,6 +252,16 @@ class ServiceDataStorage:
         except StopIteration:
             scheduler_node = None
 
+        periodic_durations = None
+        periodic_duration_std_devs = None
+        periodic_rates_fps = None
+        exponential_durations = None
+        exponential_duration_std_devs = None
+        exponential_rates_fps = None
+        machine_speeds = None
+        power_idle_w = None
+        power_cpu_w = None
+
         if scheduler_node is not None:
             try:
                 periodic_sizes = getattr(scheduler_node, "_job_periodic_payload_sizes_mbytes", None)
@@ -262,10 +272,41 @@ class ServiceDataStorage:
                 )
                 if exponential_sizes:
                     exponential_size_mb = sum(exponential_sizes) / float(len(exponential_sizes))
+
+                periodic_durations = getattr(scheduler_node, "_job_periodic_durations", None)
+                periodic_duration_std_devs = getattr(
+                    scheduler_node, "_job_periodic_duration_std_devs", None
+                )
+                periodic_rates_fps = getattr(scheduler_node, "_job_periodic_rates_fps", None)
+
+                exponential_durations = getattr(scheduler_node, "_job_exponential_durations", None)
+                exponential_duration_std_devs = getattr(
+                    scheduler_node, "_job_exponential_duration_std_devs", None
+                )
+                exponential_rates_fps = getattr(scheduler_node, "_job_exponential_rates_fps", None)
             except Exception:
-                # Best-effort only; fall back to defaults in the reader if needed.
                 periodic_size_mb = None
                 exponential_size_mb = None
+                periodic_durations = None
+                periodic_duration_std_devs = None
+                periodic_rates_fps = None
+                exponential_durations = None
+                exponential_duration_std_devs = None
+                exponential_rates_fps = None
+
+        try:
+            machine_speeds = ",".join(str(node._machine_speed) for node in self._nodes)  # type: ignore[attr-defined]
+        except Exception:
+            machine_speeds = None
+
+        try:
+            # Assume homogeneous power settings across nodes; read from the first node.
+            first_node = self._nodes[0]
+            power_idle_w = getattr(first_node, "_power_idle_w", None)
+            power_cpu_w = getattr(first_node, "_power_max_cpu_w", None)
+        except Exception:
+            power_idle_w = None
+            power_cpu_w = None
 
         sim_config_values = {
             "NET_SPEED_SCHEDULER_WORKER_MBIT": str(NET_SPEED_SCHEDULER_WORKER_MBIT),
@@ -274,11 +315,41 @@ class ServiceDataStorage:
             "PROBING_ENERGY_COST_WH": str(PROBING_ENERGY_COST_WH),
             "POWER_MAX_TRANSMISSION_W": str(POWER_MAX_TRANSMISSION_W),
             "WORKER_BATTERY_CAPACITIES": ",".join(str(v) for v in WORKER_BATTERY_CAPACITIES),
+            # Tag to distinguish different workload / environment models in analysis.
+            "MODEL_VERSION": os.getenv("MODEL_VERSION", "baseline_v1"),
         }
         if periodic_size_mb is not None:
+            sim_config_values["JOB_PERIODIC_PAYLOAD_SIZES_MB"] = ",".join(
+                str(v) for v in periodic_sizes  # type: ignore[name-defined]
+            )
             sim_config_values["JOB_PERIODIC_PAYLOAD_SIZE_MB"] = str(periodic_size_mb)
         if exponential_size_mb is not None:
+            sim_config_values["JOB_EXPONENTIAL_PAYLOAD_SIZES_MB"] = ",".join(
+                str(v) for v in exponential_sizes  # type: ignore[name-defined]
+            )
             sim_config_values["JOB_EXPONENTIAL_PAYLOAD_SIZE_MB"] = str(exponential_size_mb)
+        if periodic_durations is not None:
+            sim_config_values["JOB_PERIODIC_DURATIONS_S"] = ",".join(str(v) for v in periodic_durations)
+        if periodic_duration_std_devs is not None:
+            sim_config_values["JOB_PERIODIC_DURATION_STD_DEVS_S"] = ",".join(
+                str(v) for v in periodic_duration_std_devs
+            )
+        if periodic_rates_fps is not None:
+            sim_config_values["JOB_PERIODIC_RATES_FPS"] = ",".join(str(v) for v in periodic_rates_fps)
+        if exponential_durations is not None:
+            sim_config_values["JOB_EXPONENTIAL_DURATIONS_S"] = ",".join(str(v) for v in exponential_durations)
+        if exponential_duration_std_devs is not None:
+            sim_config_values["JOB_EXPONENTIAL_DURATION_STD_DEVS_S"] = ",".join(
+                str(v) for v in exponential_duration_std_devs
+            )
+        if exponential_rates_fps is not None:
+            sim_config_values["JOB_EXPONENTIAL_RATES_FPS"] = ",".join(str(v) for v in exponential_rates_fps)
+        if machine_speeds is not None:
+            sim_config_values["NODE_MACHINE_SPEEDS"] = machine_speeds
+        if power_idle_w is not None:
+            sim_config_values["POWER_IDLE_W"] = str(power_idle_w)
+        if power_cpu_w is not None:
+            sim_config_values["POWER_MAX_CPU_W"] = str(power_cpu_w)
 
         for key, value in sim_config_values.items():
             self._db_cur.execute(

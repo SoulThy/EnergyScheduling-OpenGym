@@ -216,12 +216,24 @@ def main() -> None:
         def _get(name: str, default: str = "n/a") -> str:
             return cfg.get(name, default)
 
+        print(f"- MODEL_VERSION: {_get('MODEL_VERSION')}")
+        print(f"- WORKER_BATTERY_CAPACITIES: {_get('WORKER_BATTERY_CAPACITIES')}")
+        print(f"- POWER_IDLE_W: {_get('POWER_IDLE_W')}")
+        print(f"- POWER_MAX_CPU_W: {_get('POWER_MAX_CPU_W')}")
+        print(f"- POWER_MAX_TRANSMISSION_W: {_get('POWER_MAX_TRANSMISSION_W')}")
         print(f"- NET_SPEED_SCHEDULER_WORKER_MBIT: {_get('NET_SPEED_SCHEDULER_WORKER_MBIT')}")
         print(f"- PROBE_SIZE_BYTES: {_get('PROBE_SIZE_BYTES')}")
         print(f"- PROBE_CROSSFACTOR_J: {_get('PROBE_CROSSFACTOR_J')}")
         print(f"- PROBING_ENERGY_COST_WH: {_get('PROBING_ENERGY_COST_WH')}")
-        print(f"- POWER_MAX_TRANSMISSION_W: {_get('POWER_MAX_TRANSMISSION_W')}")
-        print(f"- WORKER_BATTERY_CAPACITIES: {_get('WORKER_BATTERY_CAPACITIES')}")
+        print(f"- NODE_MACHINE_SPEEDS: {_get('NODE_MACHINE_SPEEDS')}")
+        print(f"- JOB_PERIODIC_PAYLOAD_SIZES_MB: {_get('JOB_PERIODIC_PAYLOAD_SIZES_MB')}")
+        print(f"- JOB_EXPONENTIAL_PAYLOAD_SIZES_MB: {_get('JOB_EXPONENTIAL_PAYLOAD_SIZES_MB')}")
+        print(f"- JOB_PERIODIC_DURATIONS_S: {_get('JOB_PERIODIC_DURATIONS_S')}")
+        print(f"- JOB_EXPONENTIAL_DURATIONS_S: {_get('JOB_EXPONENTIAL_DURATIONS_S')}")
+        print(f"- JOB_PERIODIC_DURATION_STD_DEVS_S: {_get('JOB_PERIODIC_DURATION_STD_DEVS_S')}")
+        print(f"- JOB_EXPONENTIAL_DURATION_STD_DEVS_S: {_get('JOB_EXPONENTIAL_DURATION_STD_DEVS_S')}")
+        print(f"- JOB_PERIODIC_RATES_FPS: {_get('JOB_PERIODIC_RATES_FPS')}")
+        print(f"- JOB_EXPONENTIAL_RATES_FPS: {_get('JOB_EXPONENTIAL_RATES_FPS')}")
     else:
         print("  (no sim_config table in this log.db)")
 
