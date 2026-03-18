@@ -48,7 +48,11 @@ class ServiceDataStorage:
 
         os.makedirs(self._log_dir, exist_ok=True)
 
-        self._db = sqlite3.connect(':memory:')  # f"{self._log_dir}/log.db")
+        # Use file-based DB to avoid holding 1M+ job rows in RAM (critical for SMALL_JOBS_V1).
+        self._db_path = os.path.join(self._log_dir, "log.db")
+        if os.path.exists(self._db_path):
+            os.remove(self._db_path)
+        self._db = sqlite3.connect(self._db_path)
         self._db_cur = self._db.cursor()
 
         self._init_db()
@@ -227,6 +231,12 @@ class ServiceDataStorage:
         self._rewards[job.get_originator_node_uid()] += reward
         self._counter_total_jobs += 1
 
+        # Periodic commit so we don't hold one huge transaction in memory. Safe because:
+        # - Each done_job() is a single INSERT; no multi-statement transaction.
+        # - Nothing reads from the DB during the run; final commit in done_simulation() persists the rest.
+        if self._counter_total_jobs > 0 and self._counter_total_jobs % 50_000 == 0:
+            self._db.commit()
+
         if job.get_episode() % 100 == 0:
             self.print_data(only_to_file=True)
 
@@ -379,9 +389,8 @@ class ServiceDataStorage:
             except AttributeError:
                 pass
 
-        # Persist all pending changes in a single transaction before dumping to disk.
+        # Persist all pending changes (DB is already on disk when using file-based connection).
         self._db.commit()
-        self._copy_db_to_file()
         self._save_models()
         self._db.close()
 
