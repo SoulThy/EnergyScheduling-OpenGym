@@ -417,6 +417,7 @@ class Node:
         """The number of job at which the last episode end"""
         self._scheduled_jobs = []  # type: List[Job]
         """List of episode jobs"""
+        self._replay_episode_start_index = 0  # set by _can_replay_start when a complete episode is found
         self._current_episode_number = 0
         """Number of total episodes"""
         self._last_logged_q_value_time = -1
@@ -1395,35 +1396,26 @@ class Node:
 
     def _no_learning_log_episode(self):
         """Start the ordered memorization and finally the replay dnnq training"""
-        # check if replay can start
         if not self._can_replay_start():
             return
+
+        start = self._replay_episode_start_index
+        episode_block = self._scheduled_jobs[start : start + self._episode_length]
+        del self._scheduled_jobs[start : start + self._episode_length]
 
         if DEBUG:
             Log.mdebug(f"{MODULE}#{self._uid}",
                        f"_memorize_and_replay_episode: started, len(self._scheduled_jobs)={len(self._scheduled_jobs)}")
 
-        episode = self._scheduled_jobs[0].get_episode()
+        episode = episode_block[0].get_episode()
         episode_jobs = 0
-        eps = self._scheduled_jobs[0].get_eps()
+        eps = episode_block[0].get_eps()
         episode_cumulative_reward = 0.0
-        i = 0
 
-        # memorize all the experience in order of job scheduling
-        while i < len(self._scheduled_jobs) and self._scheduled_jobs[i].get_episode() == episode:
+        for job in episode_block:
             self._total_processed_job += 1
             episode_jobs += 1
-
-            job = self._scheduled_jobs.pop(i)
-            state = job.get_state_snapshot()
-            action = job.get_action(0)
-
             episode_cumulative_reward += self._get_reward(job)
-
-            # if job.is_last_of_episode():
-            #     reward = episode_cumulative_reward
-            # else:
-            # reward = self._get_reward(job)
 
         if self._logging_info:
             Log.minfo(self._module(), f"episode={episode} e={eps:.2f} score={episode_cumulative_reward} jobs={episode_jobs}")
@@ -1594,9 +1586,13 @@ class Node:
             Log.mdebug(self._module(), f"node_uid={self.get_uid()}")
             raise RuntimeError("_d_sarsa_learn_episode called from worker node")
 
-        # check if replay can start
+        # check if replay can start (sets _replay_episode_start_index to first complete episode)
         if not self._can_replay_start():
             return
+
+        start = self._replay_episode_start_index
+        episode_block = self._scheduled_jobs[start : start + self._episode_length]
+        del self._scheduled_jobs[start : start + self._episode_length]
 
         time_start = time.time()
 
@@ -1604,15 +1600,12 @@ class Node:
             Log.mdebug(self._module(),
                        f"_d_sarsa_learn_episode: started, len(self._scheduled_jobs)={len(self._scheduled_jobs)}")
 
-        episode = self._scheduled_jobs[0].get_episode()
+        episode = episode_block[0].get_episode()
         episode_jobs = 0
-        eps = self._scheduled_jobs[0].get_eps()
+        eps = episode_block[0].get_eps()
         episode_cumulative_reward = 0.0
-        last_action = 0
-        i = 0
 
-        # process the first job
-        job = self._scheduled_jobs.pop(i)
+        job = episode_block[0]
         state = job.get_state_snapshot()
         action = job.get_action(0)
 
@@ -1623,16 +1616,11 @@ class Node:
         episode_cumulative_reward += reward
         losses = []
 
-        # save the job in backlog
         self._job_latest_processed[job.get_type()] = job
-        # print(f"self._job_latest_processed[job.get_type()]={self._job_latest_processed[job.get_type()]}")
-
         self._total_processed_job += 1
         episode_jobs += 1
 
-        # memorize all the experience in order of job scheduling
-        while len(self._scheduled_jobs) > 0 and self._scheduled_jobs[0].get_episode() == episode:
-            job = self._scheduled_jobs.pop(0)
+        for job in episode_block[1:]:
             new_state = job.get_state_snapshot()
             new_action = job.get_action(0)  # if not job.is_rejected() else self._action_size - 1
 
@@ -1811,20 +1799,29 @@ class Node:
         return self._total_jobs % self._episode_length == 0
 
     def _can_replay_start(self):
-        """Check if replay and memoization can start"""
+        """Check if replay and memoization can start.
+
+        Looks for the first *complete* episode in _scheduled_jobs (all jobs done,
+        including last_of_episode). That episode may not be at index 0 if jobs
+        complete out of order (e.g. under high load). When found, sets
+        self._replay_episode_start_index so the caller can pop that block and
+        avoid unbounded growth of _scheduled_jobs.
+        """
         if DEBUG:
             Log.mdebug(self._module(), f"_can_replay_start: called, len(self._scheduled_jobs)={len(self._scheduled_jobs)}")
 
         if len(self._scheduled_jobs) == 0:
             return False
 
-        last_job_executed = False
-        episode = self._scheduled_jobs[0].get_episode()
-        i = 0
-        while i < len(self._scheduled_jobs) and self._scheduled_jobs[i].get_episode() == episode:
-            job = self._scheduled_jobs[i]
-            if self.get_uid() == 0:
-                if DEBUG:
+        start = 0
+        while start < len(self._scheduled_jobs):
+            episode = self._scheduled_jobs[start].get_episode()
+            i = start
+            count = 0
+            last_job_executed = False
+            while i < len(self._scheduled_jobs) and self._scheduled_jobs[i].get_episode() == episode:
+                job = self._scheduled_jobs[i]
+                if self.get_uid() == 0 and DEBUG:
                     Log.mdebug(self._module(), f"_can_replay_start: id={job} ep={job.get_episode()} "
                                                f"is_done={job.is_done()} is_last={job.is_last_of_episode()} "
                                                f"rej={job.is_rejected()} action={job.get_action(0)} "
@@ -1833,16 +1830,20 @@ class Node:
                                                f"now={self._env.now:.4f} time_gen={job._time_generated:.4f} "
                                                f"time_queued={job.get_queue_time():.4f} next_action={job.get_transmission_next_action()} "
                                                f"dispatched_time={job.get_dispatched_time():.4f} dispatched={job.is_dispatched()}")
-            if not job.is_done():
-                return False
-
-            # check if the last job has been executed
-            if job.is_last_of_episode():
-                last_job_executed = True
-
-            i += 1
-
-        return last_job_executed
+                if not job.is_done():
+                    start = i + 1
+                    break
+                if job.is_last_of_episode():
+                    last_job_executed = True
+                count += 1
+                i += 1
+            else:
+                if count == self._episode_length and last_job_executed:
+                    self._replay_episode_start_index = start
+                    return True
+                start = i
+                continue
+        return False
 
     def _get_reward_battery(self, action):
         def get_lifespan_reward(action_worker, worker_nodes):
