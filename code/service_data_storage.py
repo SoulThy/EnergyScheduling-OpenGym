@@ -48,11 +48,20 @@ class ServiceDataStorage:
 
         os.makedirs(self._log_dir, exist_ok=True)
 
-        # Use file-based DB to avoid holding 1M+ job rows in RAM (critical for SMALL_JOBS_V1).
-        self._db_path = os.path.join(self._log_dir, "log.db")
-        if os.path.exists(self._db_path):
-            os.remove(self._db_path)
-        self._db = sqlite3.connect(self._db_path)
+        # LOG_DB_IN_MEMORY=1: use in-memory DB (faster, needs more RAM). Good for cloud (e.g. DigitalOcean).
+        # Unset or 0: use file-based DB (lower RAM, good for local runs).
+        _env_val = os.getenv("LOG_DB_IN_MEMORY", "").strip().lower()
+        self._db_in_memory = _env_val in ("1", "true", "yes")
+        if self._db_in_memory:
+            self._db_path = None
+            self._db = sqlite3.connect(":memory:")
+            Log.minfo(MODULE, "Log DB: in-memory (will write to file at end of run)")
+        else:
+            self._db_path = os.path.join(self._log_dir, "log.db")
+            if os.path.exists(self._db_path):
+                os.remove(self._db_path)
+            self._db = sqlite3.connect(self._db_path)
+            Log.minfo(MODULE, f"Log DB: file-based {self._db_path}")
         self._db_cur = self._db.cursor()
 
         self._init_db()
@@ -156,10 +165,11 @@ class ServiceDataStorage:
         Log.minfo(MODULE, "DB init")
 
     def _copy_db_to_file(self):
+        """Dump in-memory DB to log.db on disk. Only used when _db_in_memory is True."""
         Log.minfo(MODULE, "Copying memory db to file, please wait")
         start = time.time()
 
-        db_path = f"{self._log_dir}/log.db"
+        db_path = os.path.join(self._log_dir, "log.db")
         # Overwrite any existing log.db from previous runs so that the full
         # in-memory schema can be recreated without table-name conflicts.
         if os.path.exists(db_path):
@@ -389,8 +399,9 @@ class ServiceDataStorage:
             except AttributeError:
                 pass
 
-        # Persist all pending changes (DB is already on disk when using file-based connection).
         self._db.commit()
+        if self._db_in_memory:
+            self._copy_db_to_file()
         self._save_models()
         self._db.close()
 

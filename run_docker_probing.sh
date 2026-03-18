@@ -7,6 +7,7 @@ set -euo pipefail
 
 docker run --platform linux/amd64 --rm -it \
   --name energysim-sim \
+  --env LOG_DB_IN_MEMORY=1 \
   --env MODEL_VERSION=LEGACY \
   --env MAX_PARALLEL_SIMULATIONS=2 \
   --workdir /code \

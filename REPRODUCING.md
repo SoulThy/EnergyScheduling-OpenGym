@@ -38,6 +38,7 @@ existing env vars. This is optional and more error-prone, so prefer defaults unl
 - `NET_SPEED_CLIENT_SCHEDULER_MBIT`, `NET_SPEED_SCHEDULER_WORKER_MBIT`, `NET_SPEED_SCHEDULER_CLOUD_MBIT` (Mbit/s)
 - `POWER_MAX_TRANSMISSION_W` (W)
 - `PROBE_SIZE_BYTES` (bytes) and `PROBING_ENERGY_COST_WH` (Wh), if you want to control probing directly
+- `LOG_DB_IN_MEMORY=1`: keep the log database in RAM during the run (faster, needs more RAM). Good for cloud (e.g. DigitalOcean). When set, the DB is still written to `log.db` on disk at the end. Default: file-based DB (lower RAM, for local runs).
 
 All of these are also written into `log.db` (`sim_config`) for reproducibility.
 
