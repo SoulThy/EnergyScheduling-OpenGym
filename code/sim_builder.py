@@ -148,11 +148,11 @@ def build_simulator(
     if solar_panel_spec_by_node_id is None:
         solar_panel_spec_by_node_id = {}
 
-    # Fallback to legacy defaults if job sizes are not explicitly provided.
+    # When caller does not pass payloads, use the current model preset (LEGACY or SMALL_JOBS_V1).
     if job_periodic_payload_sizes_mbytes is None:
-        job_periodic_payload_sizes_mbytes = (0.050, 0.050, 0.050)
+        job_periodic_payload_sizes_mbytes = CURRENT_JOB_PARAMS["periodic_payloads_mb"]
     if job_exponential_payload_sizes_mbytes is None:
-        job_exponential_payload_sizes_mbytes = [0.1]
+        job_exponential_payload_sizes_mbytes = CURRENT_JOB_PARAMS["exponential_payloads_mb"]
 
     env = simpy.Environment()
     cloud = Cloud(env, latency_roundtrip_ms=cloud_latency_roundtrip_ms)
