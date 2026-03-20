@@ -76,7 +76,11 @@ SMALL_JOBS_V1_JOB_PARAMS = {
     "periodic_percentages": (0.33, 0.33, 0.34),
     "periodic_deadlines_s": (0.016, 0.033, 0.070),  # TODO: change if we want stricter regime
     "periodic_durations_s": (0.00285, 0.00570, 0.01568), # Legacy * 0.285
-    "periodic_arrival_time_std_devs_s": (0.001, 0.002, 0.01),
+    # Keep arrival-time variability coherent with the increased rates.
+    # Node periodic generator draws N(1/rate, sigma) and rejects too-small
+    # inter-arrival times (time_wait < 1/rate). If sigma is not scaled down
+    # with higher rates, the effective arrival rate drifts below target.
+    "periodic_arrival_time_std_devs_s": (0.0005, 0.001, 0.005),  # legacy / 2
     "periodic_rates_fps": (120, 60, 30), # Legacy * 2
     "periodic_desired_rates_fps": (120, 60, 30), # Legacy * 2
     "periodic_desired_rates_max_fps": (120, 60, 30), # Legacy * 2
@@ -84,7 +88,8 @@ SMALL_JOBS_V1_JOB_PARAMS = {
 
     "exponential_payloads_mb": [0.00368],  # Legacy * 0.0368
     "exponential_duration_std_devs_s": [0.00285], # Legacy * 0.285
-    "exponential_arrival_time_std_devs_s": [0.01],
+    # (Currently unused by Node for EXPO arrivals, but kept coherent.)
+    "exponential_arrival_time_std_devs_s": [0.005],  # legacy / 2
     "exponential_percentages": [1],
     "exponential_deadlines_s": [0.300], # TODO: change if we want stricter regime
     "exponential_durations_s": [0.0285], # Legacy * 0.285
@@ -102,7 +107,8 @@ SMALL_JOBS_V2_JOB_PARAMS = {
     "periodic_percentages": (0.33, 0.33, 0.34),
     "periodic_deadlines_s": (0.016, 0.033, 0.070),
     "periodic_durations_s": (0.00285, 0.00570, 0.01568),
-    "periodic_arrival_time_std_devs_s": (0.001, 0.002, 0.01),
+    # legacy / 4 (same shape vs mean as V1/LEGACY)
+    "periodic_arrival_time_std_devs_s": (0.00025, 0.0005, 0.0025),
     "periodic_rates_fps": (240, 120, 60),  # LEGACY * 4
     "periodic_desired_rates_fps": (240, 120, 60),  # LEGACY * 4
     "periodic_desired_rates_max_fps": (240, 120, 60),  # LEGACY * 4
@@ -110,7 +116,8 @@ SMALL_JOBS_V2_JOB_PARAMS = {
 
     "exponential_payloads_mb": [0.00368],
     "exponential_duration_std_devs_s": [0.00285],
-    "exponential_arrival_time_std_devs_s": [0.01],
+    # (Currently unused by Node for EXPO arrivals, but kept coherent.)
+    "exponential_arrival_time_std_devs_s": [0.0025],
     "exponential_percentages": [1],
     "exponential_deadlines_s": [0.300],
     "exponential_durations_s": [0.0285],
