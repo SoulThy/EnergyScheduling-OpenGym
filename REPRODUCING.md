@@ -17,13 +17,16 @@ We use a single environment variable to select the **job/workload model**:
 - `MODEL_VERSION=LEGACY`: original (baseline) workload.
 - `MODEL_VERSION=SMALL_JOBS_V1`: alternative workload preset (smaller/more frequent jobs). Values live in
   `code/sim_builder.py` under `SMALL_JOBS_V1_JOB_PARAMS` and can be edited.
+- `MODEL_VERSION=SMALL_JOBS_V2`: even more frequent arrivals (approx `x4` vs `LEGACY` arrival rates), keeping the
+  "SMALL" payload sizes and compute durations. Values live in `code/sim_builder.py` under `SMALL_JOBS_V2_JOB_PARAMS`.
 
 The chosen model version and the full job parameters (payload sizes, deadlines, durations, std devs, FPS targets)
 are written into each run's `log.db` under the `sim_config` table by `ServiceDataStorage.done_simulation()`.
 
 ### Start the container (minimal, safe defaults)
 
-Use this command to start an interactive container with the baseline hardware defaults and a selected workload model:
+Use this command to start an interactive container with the baseline hardware defaults and a selected workload model.
+Edit the script with the values of your liking.
 
 ```shell
 ./run_docker_probing.sh

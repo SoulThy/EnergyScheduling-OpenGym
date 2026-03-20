@@ -35,6 +35,8 @@ from service_discovery import ServiceDiscovery
 # The LEGACY preset reproduces the original D-SARSA thesis configuration.
 # SMALL_JOBS_V1 starts from the same values but is intended to be edited to
 # represent smaller, more frequent jobs with different FPS objectives.
+# SMALL_JOBS_V2 further increases the job arrival frequency (vs LEGACY)
+# while keeping the "SMALL" job sizes/durations regime.
 
 LEGACY_JOB_PARAMS = {
     "periodic_payloads_mb": (0.050, 0.050, 0.050),
@@ -92,9 +94,36 @@ SMALL_JOBS_V1_JOB_PARAMS = {
     "exponential_desired_rates_max_fps": [10],
 }
 
+SMALL_JOBS_V2_JOB_PARAMS = {
+    # V2 keeps the same "SMALL" payload sizes and compute durations of V1.
+    # It only increases arrival frequency: LEGACY -> V2 ~= x4.
+    "periodic_payloads_mb": (0.00184, 0.00184, 0.00184),
+    "periodic_duration_std_devs_s": (0.000086, 0.000086, 0.000086),
+    "periodic_percentages": (0.33, 0.33, 0.34),
+    "periodic_deadlines_s": (0.016, 0.033, 0.070),
+    "periodic_durations_s": (0.00285, 0.00570, 0.01568),
+    "periodic_arrival_time_std_devs_s": (0.001, 0.002, 0.01),
+    "periodic_rates_fps": (240, 120, 60),  # LEGACY * 4
+    "periodic_desired_rates_fps": (240, 120, 60),  # LEGACY * 4
+    "periodic_desired_rates_max_fps": (240, 120, 60),  # LEGACY * 4
+    "periodic_desired_rates_min_fps": (200, 80, 40),  # LEGACY * 4
+
+    "exponential_payloads_mb": [0.00368],
+    "exponential_duration_std_devs_s": [0.00285],
+    "exponential_arrival_time_std_devs_s": [0.01],
+    "exponential_percentages": [1],
+    "exponential_deadlines_s": [0.300],
+    "exponential_durations_s": [0.0285],
+    "exponential_rates_fps": [40],  # LEGACY * 4
+    "exponential_desired_rates_fps": [4],  # LEGACY * 4
+    "exponential_desired_rates_min_fps": [0],
+    "exponential_desired_rates_max_fps": [10],
+}
+
 _JOB_PARAMS_BY_MODEL = {
     "LEGACY": LEGACY_JOB_PARAMS,
     "SMALL_JOBS_V1": SMALL_JOBS_V1_JOB_PARAMS,
+    "SMALL_JOBS_V2": SMALL_JOBS_V2_JOB_PARAMS,
 }
 
 CURRENT_JOB_PARAMS = _JOB_PARAMS_BY_MODEL.get(MODEL_VERSION, LEGACY_JOB_PARAMS)
@@ -148,7 +177,7 @@ def build_simulator(
     if solar_panel_spec_by_node_id is None:
         solar_panel_spec_by_node_id = {}
 
-    # When caller does not pass payloads, use the current model preset (LEGACY or SMALL_JOBS_V1).
+    # When caller does not pass payloads, use the current model preset (LEGACY / SMALL_JOBS_V1 / SMALL_JOBS_V2).
     if job_periodic_payload_sizes_mbytes is None:
         job_periodic_payload_sizes_mbytes = CURRENT_JOB_PARAMS["periodic_payloads_mb"]
     if job_exponential_payload_sizes_mbytes is None:
