@@ -7,16 +7,17 @@ Finds all log.db under results/data/_log/learning/D_SARSA/ONLY_WORKERS/*B_PS/,
 calls log_simulation_db.compute_stats() on each, and produces:
 - One figure (probing energy share vs probe size, single y-axis)
   stored under _log (e.g. .../ONLY_WORKERS/probe_sweep_graph.png).
-- One stacked-bar figure (composition of consumption: idle, processing, transmission, probing)
-  per probe size (probe_sweep_breakdown.png), to show why probing share stays small.
 - One figure (probe_energy_components.png): crossfactor vs packet-transmission share of
   per-probe energy vs probe size, to show who dominates at which sizes.
-- One pie chart of energy share (processing / transmission / probing) per simulation,
-  stored in each simulation folder next to its log.db (e.g. .../200B_PS/energy_pie.png).
+- One figure (probing-over-execution sweep): per probe size, stacked share of probing vs execution
+  (idle excluded),
+  stored under _log (e.g. .../ONLY_WORKERS/probe_over_execution_graph.png).
+- One pie chart of energy share (processing / probing / idle) per simulation,
+  stored in each simulation folder next to its log.db (e.g. .../200B_PS/energy_pie_full.png).
 
 Note on sigma (battery variance) and 60FPS: When probing packet size increases,
 the 60FPS worker often dies earlier than 15/30FPS workers because it runs more
-jobs (highest load) and thus consumes more execution+transmission energy; extra
+ jobs (highest load) and thus consumes more execution energy; extra
 probing cost is applied to all workers equally, so the already busiest node hits
 zero first and sigma (variance of battery levels) increases.
 
@@ -84,7 +85,6 @@ def load_sweep_stats(
         }
         if "execution_energy_share" in stats:
             row["execution_energy_share"] = stats["execution_energy_share"]
-            row["transmission_energy_share"] = stats["transmission_energy_share"]
             row["idle_energy_share"] = stats.get("idle_energy_share", 0.0)
         raw.append(row)
 
@@ -110,7 +110,6 @@ def load_sweep_stats(
         }
         if "execution_energy_share" in group[0]:
             agg["execution_energy_share"] = sum(r["execution_energy_share"] for r in group) / n
-            agg["transmission_energy_share"] = sum(r["transmission_energy_share"] for r in group) / n
             agg["idle_energy_share"] = sum(r.get("idle_energy_share", 0) for r in group) / n
         if n > 1:
             agg["job_success_ratio_std"] = (
@@ -166,8 +165,80 @@ def plot_sweep(rows: List[Dict[str, Any]], out_path: Path) -> None:
     print(f"Saved: {out_path}")
 
 
+def plot_probe_over_execution_sweep(rows: List[Dict[str, Any]], out_path: Path) -> None:
+    """
+    Plot per probe size a stacked bar split of energy between probing and execution.
+
+    The stacked shares are normalized so they sum to 100% for (probing + execution) only
+    (idle excluded).
+    """
+    if not rows:
+        print("No data to plot.", file=sys.stderr)
+        return
+
+    x_sizes: List[int] = []
+    exec_norm: List[float] = []
+    probe_norm: List[float] = []
+
+    for r in rows:
+        exec_share = float(r.get("execution_energy_share", 0.0))
+        probe_share = float(r.get("probing_energy_share", 0.0))
+        denom = exec_share + probe_share
+        if denom <= 0:
+            continue
+        x_sizes.append(int(r["probe_size_bytes"]))
+        exec_norm.append(exec_share / denom)
+        probe_norm.append(probe_share / denom)
+
+    if not x_sizes:
+        print("No valid (probing+execution) energy data to plot probing vs execution.", file=sys.stderr)
+        return
+
+    x_pos = list(range(len(x_sizes)))
+    fig, ax = plt.subplots(figsize=(8, 4))
+    width = 0.7
+
+    ax.bar(x_pos, exec_norm, width, label="Execution", color="#5b9bd5")
+    ax.bar(x_pos, probe_norm, width, bottom=exec_norm, label="Probing", color="#ed7d31")
+
+    # Annotate probing share inside its segment (keeps the chart readable without clutter).
+    for i in range(len(x_sizes)):
+        y = exec_norm[i] + (probe_norm[i] / 2.0)
+        if probe_norm[i] <= 0:
+            continue
+        ax.text(
+            x_pos[i],
+            y,
+            f"{probe_norm[i] * 100:.0f}%",
+            ha="center",
+            va="center",
+            fontsize=9,
+            color="#333333",
+        )
+
+    ax.set_ylabel("Share of (probing+execution) energy [%]")
+    ax.set_xlabel("Probing packet size")
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels(
+        [f"{v // 1000} KB" if v >= 10000 else f"{v} B" for v in x_sizes],
+        rotation=45,
+        ha="right",
+    )
+    ax.set_ylim(0, 1)
+    ax.yaxis.set_major_formatter(PercentFormatter(xmax=1.0))
+    ax.legend(loc="upper right", fontsize=9)
+    ax.grid(True, which="major", axis="y", alpha=0.3)
+    ax.set_title("Probing vs execution energy split (idle excluded)")
+
+    plt.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"Saved: {out_path}")
+
+
 def plot_sweep_breakdown(rows: List[Dict[str, Any]], out_path: Path) -> None:
-    """Stacked bar: composition of energy consumption (idle, processing, transmission, probing)
+    """Stacked bar: composition of energy consumption (idle, processing, probing)
     per probe size. Shows why probing share stays small despite 510× larger packets:
     consumption is dominated by processing and idle."""
     has_breakdown = rows and "execution_energy_share" in rows[0]
@@ -178,16 +249,14 @@ def plot_sweep_breakdown(rows: List[Dict[str, Any]], out_path: Path) -> None:
     x_pos = list(range(len(x)))
     idle = [r.get("idle_energy_share", 0) for r in rows]
     exec_ = [r.get("execution_energy_share", 0) for r in rows]
-    trans = [r.get("transmission_energy_share", 0) for r in rows]
     probe = [r.get("probing_energy_share", 0) for r in rows]
 
     # Normalize to 100% (share of total consumption) so stacked bar sums to 1
-    total = [idle[i] + exec_[i] + trans[i] + probe[i] for i in range(len(rows))]
+    total = [idle[i] + exec_[i] + probe[i] for i in range(len(rows))]
     if not all(t > 0 for t in total):
         return
     idle_n = [idle[i] / total[i] for i in range(len(rows))]
     exec_n = [exec_[i] / total[i] for i in range(len(rows))]
-    trans_n = [trans[i] / total[i] for i in range(len(rows))]
     probe_n = [probe[i] / total[i] for i in range(len(rows))]
 
     fig, ax = plt.subplots(figsize=(8, 4))
@@ -195,9 +264,7 @@ def plot_sweep_breakdown(rows: List[Dict[str, Any]], out_path: Path) -> None:
     ax.bar(x_pos, idle_n, width, label="Idle", color="#a5a5a5")
     ax.bar(x_pos, exec_n, width, bottom=idle_n, label="Processing", color="#5b9bd5")
     bottom2 = [idle_n[i] + exec_n[i] for i in range(len(rows))]
-    ax.bar(x_pos, trans_n, width, bottom=bottom2, label="Transmission (jobs)", color="#70ad47")
-    bottom3 = [bottom2[i] + trans_n[i] for i in range(len(rows))]
-    ax.bar(x_pos, probe_n, width, bottom=bottom3, label="Probing", color="#ed7d31")
+    ax.bar(x_pos, probe_n, width, bottom=bottom2, label="Probing", color="#ed7d31")
 
     ax.set_ylabel("Share of energy consumption [%]")
     ax.set_xlabel("Probing packet size")
@@ -276,17 +343,14 @@ def _format_probe_size(probe_bytes: int) -> str:
 
 
 def plot_energy_pie(row: Dict[str, Any], out_path: Path) -> None:
-    """Draw a minimal pie chart of energy share: processing, transmission, probing (and idle)."""
+    """Draw a minimal pie chart of energy share: processing, probing, and idle."""
     labels = []
     sizes = []
-    # Soft, minimal palette: processing, transmission, probing, idle
-    colors = ["#5b9bd5", "#70ad47", "#ed7d31", "#a5a5a5"]
+    # Soft, minimal palette: processing, probing, idle
+    colors = ["#5b9bd5", "#ed7d31", "#a5a5a5"]
     if row.get("execution_energy_share", 0) > 0:
         labels.append("Processing")
         sizes.append(row["execution_energy_share"])
-    if row.get("transmission_energy_share", 0) > 0:
-        labels.append("Transmission")
-        sizes.append(row["transmission_energy_share"])
     if row.get("probing_energy_share", 0) > 0:
         labels.append("Probing")
         sizes.append(row["probing_energy_share"])
@@ -314,6 +378,63 @@ def plot_energy_pie(row: Dict[str, Any], out_path: Path) -> None:
     probe_str = _format_probe_size(row["probe_size_bytes"])
     ax.set_title(f"Energy share — {probe_str}", fontsize=11, color="#444444")
     ax.set_axis_off()
+    plt.tight_layout(pad=0.5)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"Saved: {out_path}")
+
+
+def plot_probe_vs_execution_energy(row: Dict[str, Any], out_path: Path) -> None:
+    """
+    Draw a clean per-simulation chart showing probing energy as % of execution energy.
+
+    Since the inputs are energy shares (fractions of total energy), the ratio
+    probing/execution is equivalent to probing_energy/execution_energy.
+    """
+    probing_share = float(row.get("probing_energy_share", 0.0))
+    execution_share = float(row.get("execution_energy_share", 0.0))
+
+    if probing_share <= 0 and execution_share <= 0:
+        print("No energy breakdown available for probing vs execution chart.", file=sys.stderr)
+        return
+
+    probe_str = _format_probe_size(int(row["probe_size_bytes"]))
+
+    fig, ax = plt.subplots(figsize=(5.0, 3.6))
+    percent: float | None = None
+    if execution_share > 0:
+        percent = (probing_share / execution_share) * 100.0
+
+    labels = ["Probing (as % of execution)"]
+    values = [percent if percent is not None else 0.0]
+
+    ax.bar(labels, values, color="#ed7d31", width=0.62)
+    if percent is None:
+        ax.set_ylabel("Probing energy as % of execution energy")
+        ax.set_ylim(0, 1)
+        ax.text(0, 0.5, "N/A (execution=0)", ha="center", va="center", fontsize=10, color="#333333")
+    else:
+        ax.set_ylabel("Probing energy as % of execution energy")
+        ax.set_ylim(0, max(5.0, percent * 1.25))
+
+    # Annotate bar value for quick reading.
+    if percent is not None:
+        ax.text(
+            0,
+            percent + (ax.get_ylim()[1] * 0.02),
+            f"{percent:.1f}%",
+            ha="center",
+            va="bottom",
+            fontsize=9,
+            color="#333333",
+        )
+
+    ax.grid(True, axis="y", alpha=0.25)
+    ax.set_title(f"Probing as % of execution — {probe_str}", fontsize=11, color="#444444")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
     plt.tight_layout(pad=0.5)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out_path, dpi=150, bbox_inches="tight")
@@ -362,9 +483,9 @@ def main() -> None:
 
     plot_sweep(rows, out_path)
 
-    # Stacked bar: why probing share stays small (consumption dominated by processing + idle).
-    breakdown_path = out_path.parent / "probe_sweep_breakdown.png"
-    plot_sweep_breakdown(rows, breakdown_path)
+    # Probing overhead compared to actual work (execution).
+    probe_over_execution_path = out_path.parent / "probe_over_execution_graph.png"
+    plot_probe_over_execution_sweep(rows, probe_over_execution_path)
 
     # Crossfactor vs packet transmission: who dominates per-probe energy at each size.
     plot_probe_energy_components(out_path.parent / "probe_energy_components.png")
@@ -383,10 +504,9 @@ def main() -> None:
             "probing_energy_share": stats["probing_energy_share"],
             "job_success_ratio": stats["job_success_ratio"],
             "execution_energy_share": stats["execution_energy_share"],
-            "transmission_energy_share": stats["transmission_energy_share"],
             "idle_energy_share": stats.get("idle_energy_share", 0.0),
         }
-        plot_energy_pie(row, db_path.parent / "energy_pie.png")
+        plot_energy_pie(row, db_path.parent / "energy_pie_full.png")
 
 
 if __name__ == "__main__":

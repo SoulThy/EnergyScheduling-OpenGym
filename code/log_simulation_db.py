@@ -87,13 +87,16 @@ def compute_stats(db_path: Path) -> Dict[str, Any]:
         # Probing energy per node (Wh) – available for new simulations where the
         # probing_energy table exists.
         probing_energy_by_node: Dict[int, float] = {}
+        has_probing_energy_table = False
         try:
             cur.execute("SELECT node_uid, energy_wh FROM probing_energy;")
+            has_probing_energy_table = True
             for node_uid, energy_wh in cur.fetchall():
                 probing_energy_by_node[int(node_uid)] = float(energy_wh)
         except sqlite3.OperationalError:
             # Older log.db files won't have this table; keep stats minimal.
             probing_energy_by_node = {}
+            has_probing_energy_table = False
 
         total_probing_energy_wh = sum(probing_energy_by_node.values())
         total_battery_capacity_wh = float(sum(WORKER_BATTERY_CAPACITIES))
@@ -101,30 +104,30 @@ def compute_stats(db_path: Path) -> Dict[str, Any]:
             (total_probing_energy_wh / total_battery_capacity_wh) if total_battery_capacity_wh > 0 else 0.0
         )
 
-        # Energy breakdown: idle / execution / transmission (worker_energy_breakdown).
+        # Energy breakdown: idle / execution (worker_energy_breakdown).
         total_idle_wh = 0.0
         total_execution_wh = 0.0
-        total_transmission_wh = 0.0
         try:
             cur.execute(
-                "SELECT node_uid, idle_wh, execution_wh, transmission_wh FROM worker_energy_breakdown;"
+                "SELECT node_uid, idle_wh, execution_wh FROM worker_energy_breakdown;"
             )
-            for _uid, idle_wh, execution_wh, transmission_wh in cur.fetchall():
+            for _uid, idle_wh, execution_wh in cur.fetchall():
                 total_idle_wh += float(idle_wh or 0.0)
                 total_execution_wh += float(execution_wh or 0.0)
-                total_transmission_wh += float(transmission_wh or 0.0)
         except sqlite3.OperationalError:
             pass
 
         execution_energy_share = (
             (total_execution_wh / total_battery_capacity_wh) if total_battery_capacity_wh > 0 else 0.0
         )
-        transmission_energy_share = (
-            (total_transmission_wh / total_battery_capacity_wh) if total_battery_capacity_wh > 0 else 0.0
-        )
         idle_energy_share = (
             (total_idle_wh / total_battery_capacity_wh) if total_battery_capacity_wh > 0 else 0.0
         )
+
+        # Probing overhead relative to actual work ("execution") energy.
+        # If execution was zero, we keep it as None.
+        probe_over_execution = (total_probing_energy_wh / total_execution_wh) if total_execution_wh > 0 else None
+        probe_over_execution_percent = (probe_over_execution * 100.0) if probe_over_execution is not None else None
 
         # ----------------------------------------------------------------------------
         # Expected average job size (MB) from sim_config payloads and rates
@@ -185,10 +188,11 @@ def compute_stats(db_path: Path) -> Dict[str, Any]:
             "probing_energy_share": probing_energy_share,
             "total_idle_wh": total_idle_wh,
             "total_execution_wh": total_execution_wh,
-            "total_transmission_wh": total_transmission_wh,
             "execution_energy_share": execution_energy_share,
-            "transmission_energy_share": transmission_energy_share,
             "idle_energy_share": idle_energy_share,
+            "probe_over_execution": probe_over_execution,
+            "probe_over_execution_percent": probe_over_execution_percent,
+            "has_probing_energy_table": has_probing_energy_table,
         }
     finally:
         conn.close()
@@ -282,10 +286,11 @@ def main() -> None:
 
     # Probing-specific statistics (only for runs where we logged probing energy).
     pe_by_node = stats["probing_energy_by_node_wh"]
-    if pe_by_node:
+    if stats.get("has_probing_energy_table", False):
         print("- probing_energy_by_node_wh:")
-        for node_uid, energy_wh in sorted(pe_by_node.items()):
-            print(f"  - node {node_uid}: {energy_wh:.6e} Wh")
+        if pe_by_node:
+            for node_uid, energy_wh in sorted(pe_by_node.items()):
+                print(f"  - node {node_uid}: {energy_wh:.6e} Wh")
         print(f"- total_probing_energy_wh: {stats['total_probing_energy_wh']:.6e} Wh")
         print(f"- total_battery_capacity_wh: {stats['total_battery_capacity_wh']:.3f} Wh")
         print(
@@ -297,10 +302,17 @@ def main() -> None:
                 f"- execution_energy_share: {stats['execution_energy_share'] * 100:.4f}% "
                 "(CPU processing)"
             )
-            print(
-                f"- transmission_energy_share: {stats['transmission_energy_share'] * 100:.4f}% "
-                "(sending tasks)"
-            )
+            p_over_exec = stats.get("probe_over_execution")
+            if p_over_exec is not None:
+                print(
+                    f"- probe_over_execution: {p_over_exec:.6f}x "
+                    "(probing_energy / execution_energy)"
+                )
+                print(
+                    f"- probe_over_execution_percent: {stats.get('probe_over_execution_percent', 0.0):.4f}%"
+                )
+            else:
+                print("- probe_over_execution: n/a (execution_energy=0)")
             print(
                 f"- idle_energy_share: {stats['idle_energy_share'] * 100:.4f}% "
                 "(idle 1 s per round)"
