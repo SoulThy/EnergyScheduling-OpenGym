@@ -207,6 +207,7 @@ def build_simulator(
     gym_mode: bool = False,
     job_periodic_payload_sizes_mbytes: Tuple[float, float, float] | None = None,
     job_exponential_payload_sizes_mbytes: List[float] | None = None,
+    job_periodic_deadlines_s: Tuple[float, float, float] | None = None,
 ) -> tuple[simpy.Environment, list[Node], Cloud, ServiceDiscovery, ServiceDataStorage]:
     """
     Build the full simulator: SimPy env, Cloud, scheduler + 3 workers, discovery, data storage.
@@ -226,6 +227,8 @@ def build_simulator(
         solar_panel_spec_by_node_id: Optional dict node_id -> solar panel spec.
         cloud_latency_roundtrip_ms: Cloud roundtrip latency in ms.
         gym_mode: If True, scheduler waits for external action via store (for Gym env).
+        job_periodic_deadlines_s: Optional override for the three periodic job deadlines (s).
+            When None, uses the current ``MODEL_VERSION`` preset.
 
     Returns:
         (env, nodes, cloud, discovery, data_storage). nodes[0] is the scheduler.
@@ -265,6 +268,7 @@ def build_simulator(
             gym_mode=gym_mode,
             job_periodic_payload_sizes_mbytes=job_periodic_payload_sizes_mbytes,
             job_exponential_payload_sizes_mbytes=job_exponential_payload_sizes_mbytes,
+            job_periodic_deadlines_s=job_periodic_deadlines_s,
         )
     )
     nodes.append(
@@ -286,6 +290,7 @@ def build_simulator(
             machine_speed=1.8,
             job_periodic_payload_sizes_mbytes=job_periodic_payload_sizes_mbytes,
             job_exponential_payload_sizes_mbytes=job_exponential_payload_sizes_mbytes,
+            job_periodic_deadlines_s=job_periodic_deadlines_s,
         )
     )
     nodes.append(
@@ -307,6 +312,7 @@ def build_simulator(
             machine_speed=1.7,
             job_periodic_payload_sizes_mbytes=job_periodic_payload_sizes_mbytes,
             job_exponential_payload_sizes_mbytes=job_exponential_payload_sizes_mbytes,
+            job_periodic_deadlines_s=job_periodic_deadlines_s,
         )
     )
     nodes.append(
@@ -328,6 +334,7 @@ def build_simulator(
             machine_speed=1.4,
             job_periodic_payload_sizes_mbytes=job_periodic_payload_sizes_mbytes,
             job_exponential_payload_sizes_mbytes=job_exponential_payload_sizes_mbytes,
+            job_periodic_deadlines_s=job_periodic_deadlines_s,
         )
     )
 
@@ -366,9 +373,13 @@ def _create_scheduler_node(
     gym_mode: bool = False,
     job_periodic_payload_sizes_mbytes: Tuple[float, float, float] | None = None,
     job_exponential_payload_sizes_mbytes: List[float] | None = None,
+    job_periodic_deadlines_s: Tuple[float, float, float] | None = None,
 ) -> Node:
     """Create scheduler node (node_id=0). Same kwargs as legacy create_node for scheduler."""
     jp = CURRENT_JOB_PARAMS
+    periodic_deadlines = (
+        job_periodic_deadlines_s if job_periodic_deadlines_s is not None else jp["periodic_deadlines_s"]
+    )
     return Node(
         env,
         0,
@@ -399,7 +410,7 @@ def _create_scheduler_node(
         else jp["periodic_payloads_mb"],
         job_periodic_duration_std_devs=jp["periodic_duration_std_devs_s"],
         job_periodic_percentages=jp["periodic_percentages"],
-        job_periodic_deadlines=jp["periodic_deadlines_s"],
+        job_periodic_deadlines=periodic_deadlines,
         job_periodic_durations=jp["periodic_durations_s"],
         job_periodic_arrival_time_std_devs=jp["periodic_arrival_time_std_devs_s"],
         job_periodic_rates_fps=jp["periodic_rates_fps"],
@@ -464,9 +475,13 @@ def _create_worker_node(
     machine_speed: float = 1.0,
     job_periodic_payload_sizes_mbytes: Tuple[float, float, float] | None = None,
     job_exponential_payload_sizes_mbytes: List[float] | None = None,
+    job_periodic_deadlines_s: Tuple[float, float, float] | None = None,
 ) -> Node:
     """Create worker node. Same kwargs as legacy create_node for workers."""
     jp = CURRENT_JOB_PARAMS
+    periodic_deadlines = (
+        job_periodic_deadlines_s if job_periodic_deadlines_s is not None else jp["periodic_deadlines_s"]
+    )
     return Node(
         env,
         node_id,
@@ -497,7 +512,7 @@ def _create_worker_node(
         else jp["periodic_payloads_mb"],
         job_periodic_duration_std_devs=jp["periodic_duration_std_devs_s"],
         job_periodic_percentages=jp["periodic_percentages"],
-        job_periodic_deadlines=jp["periodic_deadlines_s"],
+        job_periodic_deadlines=periodic_deadlines,
         job_periodic_durations=jp["periodic_durations_s"],
         job_periodic_arrival_time_std_devs=jp["periodic_arrival_time_std_devs_s"],
         job_periodic_rates_fps=jp["periodic_rates_fps"],
