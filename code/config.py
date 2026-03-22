@@ -18,7 +18,7 @@ MAX_PARALLEL_SIMULATIONS: Final[int] = int(
     os.getenv("MAX_PARALLEL_SIMULATIONS", str(DEFAULT_MAX_PARALLEL_SIMULATIONS))
 )
 
-# High-level model selector (LEGACY, SMALL_JOBS_V2, ...).
+# High-level model selector (LEGACY, SMALL_JOBS_V2, SMALL_JOBS_V3, ...).
 MODEL_VERSION: Final[str] = os.getenv("MODEL_VERSION", "LEGACY")
 
 

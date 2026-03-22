@@ -127,10 +127,52 @@ SMALL_JOBS_V2_JOB_PARAMS = {
     "exponential_desired_rates_max_fps": [10],
 }
 
+# Same "small job" geometry and deadlines as V2; periodic FPS objectives rescaled from
+# LEGACY min/max using per-type k = avg(time_total)_legacy / avg(time_total)_target
+# (see scripts/compute_fps_scaling_from_logs.py), then rounded to multiples of 10 for
+# cleaner plot legends/axes:
+#   min: (260, 100, 40), max: (320, 150, 60).
+# Arrival rates match max FPS (as in V2). Sigmas scaled from V2 by old_rate/new_rate per type.
+_SMALL_JOBS_V3_PERIODIC_RATES = (320, 150, 60)
+_SMALL_JOBS_V2_PERIODIC_RATES = (240, 120, 60)
+_SMALL_JOBS_V3_SIGMAS = tuple(
+    s * r_old / r_new
+    for s, r_old, r_new in zip(
+        (0.00025, 0.0005, 0.0025),
+        _SMALL_JOBS_V2_PERIODIC_RATES,
+        _SMALL_JOBS_V3_PERIODIC_RATES,
+    )
+)
+
+SMALL_JOBS_V3_JOB_PARAMS = {
+    "periodic_payloads_mb": SMALL_JOBS_V2_JOB_PARAMS["periodic_payloads_mb"],
+    "periodic_duration_std_devs_s": SMALL_JOBS_V2_JOB_PARAMS["periodic_duration_std_devs_s"],
+    "periodic_percentages": SMALL_JOBS_V2_JOB_PARAMS["periodic_percentages"],
+    "periodic_deadlines_s": SMALL_JOBS_V2_JOB_PARAMS["periodic_deadlines_s"],
+    "periodic_durations_s": SMALL_JOBS_V2_JOB_PARAMS["periodic_durations_s"],
+    "periodic_arrival_time_std_devs_s": _SMALL_JOBS_V3_SIGMAS,
+    "periodic_rates_fps": _SMALL_JOBS_V3_PERIODIC_RATES,
+    "periodic_desired_rates_fps": _SMALL_JOBS_V3_PERIODIC_RATES,
+    "periodic_desired_rates_max_fps": _SMALL_JOBS_V3_PERIODIC_RATES,
+    "periodic_desired_rates_min_fps": (260, 100, 40),
+
+    "exponential_payloads_mb": SMALL_JOBS_V2_JOB_PARAMS["exponential_payloads_mb"],
+    "exponential_duration_std_devs_s": SMALL_JOBS_V2_JOB_PARAMS["exponential_duration_std_devs_s"],
+    "exponential_arrival_time_std_devs_s": SMALL_JOBS_V2_JOB_PARAMS["exponential_arrival_time_std_devs_s"],
+    "exponential_percentages": SMALL_JOBS_V2_JOB_PARAMS["exponential_percentages"],
+    "exponential_deadlines_s": SMALL_JOBS_V2_JOB_PARAMS["exponential_deadlines_s"],
+    "exponential_durations_s": SMALL_JOBS_V2_JOB_PARAMS["exponential_durations_s"],
+    "exponential_rates_fps": SMALL_JOBS_V2_JOB_PARAMS["exponential_rates_fps"],
+    "exponential_desired_rates_fps": SMALL_JOBS_V2_JOB_PARAMS["exponential_desired_rates_fps"],
+    "exponential_desired_rates_min_fps": SMALL_JOBS_V2_JOB_PARAMS["exponential_desired_rates_min_fps"],
+    "exponential_desired_rates_max_fps": SMALL_JOBS_V2_JOB_PARAMS["exponential_desired_rates_max_fps"],
+}
+
 _JOB_PARAMS_BY_MODEL = {
     "LEGACY": LEGACY_JOB_PARAMS,
     "SMALL_JOBS_V1": SMALL_JOBS_V1_JOB_PARAMS,
     "SMALL_JOBS_V2": SMALL_JOBS_V2_JOB_PARAMS,
+    "SMALL_JOBS_V3": SMALL_JOBS_V3_JOB_PARAMS,
 }
 
 CURRENT_JOB_PARAMS = _JOB_PARAMS_BY_MODEL.get(MODEL_VERSION, LEGACY_JOB_PARAMS)
@@ -141,7 +183,7 @@ def periodic_fps_target_bands(model_version: str) -> tuple[tuple[float, ...], tu
     Desired max/min FPS per periodic job type (index 0..2) for a model preset.
 
     Used by plotting/analysis so y-limits and reward bands match the workload
-    that was configured for LEGACY / SMALL_JOBS_V1 / SMALL_JOBS_V2 / ...
+    that was configured for LEGACY / SMALL_JOBS_V1 / V2 / V3 / ...
     """
     jp = _JOB_PARAMS_BY_MODEL.get(model_version, LEGACY_JOB_PARAMS)
     return jp["periodic_desired_rates_max_fps"], jp["periodic_desired_rates_min_fps"]
