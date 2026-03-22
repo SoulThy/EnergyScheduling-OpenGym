@@ -136,6 +136,17 @@ _JOB_PARAMS_BY_MODEL = {
 CURRENT_JOB_PARAMS = _JOB_PARAMS_BY_MODEL.get(MODEL_VERSION, LEGACY_JOB_PARAMS)
 
 
+def periodic_fps_target_bands(model_version: str) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    """
+    Desired max/min FPS per periodic job type (index 0..2) for a model preset.
+
+    Used by plotting/analysis so y-limits and reward bands match the workload
+    that was configured for LEGACY / SMALL_JOBS_V1 / SMALL_JOBS_V2 / ...
+    """
+    jp = _JOB_PARAMS_BY_MODEL.get(model_version, LEGACY_JOB_PARAMS)
+    return jp["periodic_desired_rates_max_fps"], jp["periodic_desired_rates_min_fps"]
+
+
 def build_simulator(
     sim_time: int,
     session_uid: str,
