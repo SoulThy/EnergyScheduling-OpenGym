@@ -49,6 +49,18 @@ def compute_stats(db_path: Path) -> Dict[str, Any]:
         cur.execute("SELECT COALESCE(SUM(over_deadline), 0) FROM jobs;")
         (over_deadline_jobs,) = cur.fetchone()
 
+        # Over-deadline jobs among executed and not rejected jobs.
+        # This matches the metric used by `run_simulation_small_jobs_v3_deadline_sweep.py`
+        # and by other FPS/deadline selection rules.
+        cur.execute(
+            "SELECT COALESCE(SUM(over_deadline), 0), COUNT(*) "
+            "FROM jobs WHERE executed = 1 AND rejected = 0"
+        )
+        (
+            over_deadline_jobs_executed_not_rejected,
+            over_deadline_den_executed_not_rejected,
+        ) = cur.fetchone()
+
         # Jobs that were executed and not over deadline: our notion of "successful" jobs.
         cur.execute(
             "SELECT COALESCE(SUM(CASE WHEN executed = 1 AND over_deadline = 0 "
@@ -165,12 +177,21 @@ def compute_stats(db_path: Path) -> Dict[str, Any]:
             "executed_jobs": int(executed_jobs),
             "rejected_jobs": int(rejected_jobs),
             "over_deadline_jobs": int(over_deadline_jobs),
+            "over_deadline_jobs_executed_not_rejected": int(
+                over_deadline_jobs_executed_not_rejected
+            ),
             "successful_jobs": int(successful_jobs),
             "job_success_ratio": (
                 float(successful_jobs) / float(total_jobs) if total_jobs > 0 else 0.0
             ),
             "over_deadline_ratio_all": (
                 float(over_deadline_jobs) / float(total_jobs) if total_jobs > 0 else 0.0
+            ),
+            "over_deadline_ratio_executed_not_rejected": (
+                float(over_deadline_jobs_executed_not_rejected)
+                / float(over_deadline_den_executed_not_rejected)
+                if over_deadline_den_executed_not_rejected > 0
+                else 0.0
             ),
             "sim_span_s": float(sim_span_s),
             "effective_fps": float(effective_fps),
@@ -256,7 +277,12 @@ def main() -> None:
     print(f"- executed_jobs: {stats['executed_jobs']}")
     print(f"- rejected_jobs: {stats['rejected_jobs']}")
     print(
-        f"- over_deadline_jobs: {stats['over_deadline_jobs']} "
+        f"- over_deadline_jobs (executed & not rejected): "
+        f"{stats['over_deadline_jobs_executed_not_rejected']} "
+        f"({stats['over_deadline_ratio_executed_not_rejected'] * 100:.2f}% of executed & not rejected jobs)"
+    )
+    print(
+        f"- over_deadline_jobs (all jobs): {stats['over_deadline_jobs']} "
         f"({stats['over_deadline_ratio_all'] * 100:.2f}% of all jobs)"
     )
     print(
