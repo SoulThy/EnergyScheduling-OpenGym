@@ -17,6 +17,7 @@ from config import (
     PROBE_CROSSFACTOR_J,
     PROBE_SIZE_BYTES,
     PROBING_ENERGY_COST_WH,
+    PROBING_STATE_REFRESH_EVERY_K_JOBS,
     WORKER_BATTERY_CAPACITIES,
     MODEL_VERSION,
 )
@@ -334,6 +335,7 @@ class ServiceDataStorage:
             "PROBE_SIZE_BYTES": str(PROBE_SIZE_BYTES),
             "PROBE_CROSSFACTOR_J": str(PROBE_CROSSFACTOR_J),
             "PROBING_ENERGY_COST_WH": str(PROBING_ENERGY_COST_WH),
+            "PROBING_STATE_REFRESH_EVERY_K_JOBS": str(PROBING_STATE_REFRESH_EVERY_K_JOBS),
             "POWER_MAX_TRANSMISSION_W": str(POWER_MAX_TRANSMISSION_W),
             "WORKER_BATTERY_CAPACITIES": ",".join(str(v) for v in WORKER_BATTERY_CAPACITIES),
             # Tag to distinguish different workload / environment models in analysis.

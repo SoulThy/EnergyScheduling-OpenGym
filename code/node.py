@@ -24,6 +24,7 @@ from config import (
     NET_SPEED_SCHEDULER_WORKER_MBIT,
     POWER_MAX_TRANSMISSION_W,
     PROBING_ENERGY_COST_WH,
+    PROBING_STATE_REFRESH_EVERY_K_JOBS,
 )
 from function_approximation import DSPSarsaTiling
 from job import Job
@@ -341,6 +342,7 @@ class Node:
         self._pwr2_threshold = pwr2_threshold
         self._pwr2_binary_policy = pwr2_binary_policy
         self._skip_plots = skip_plots
+        self._probing_state_refresh_every_k_jobs = PROBING_STATE_REFRESH_EVERY_K_JOBS
 
         #
         # Runtime variables
@@ -400,6 +402,11 @@ class Node:
         """List of jobs in the queue"""
         self._jobs_probing_list = []
         """List of jobs enqueue for probing"""
+
+        # Scheduler-side intermittent probing cache.
+        # Tail = state without the first "arrived job type" element.
+        self._state_probe_requests_count = 0
+        self._last_worker_state_tail: List[float] | None = None
         self._jobs_transmission_list = []
         """List of jobs enqueue for transmission"""
         self._currently_executing_job = None  # type: 'Job' or None
@@ -1757,40 +1764,56 @@ class Node:
         """
         worker_nodes = self._service_discovery.get_workers_in_cluster(self._node_belong_to_cluster)
 
-        # Apply probing energy cost once per state query on the scheduler.
-        if self._node_type == Node.NodeType.SCHEDULER and PROBING_ENERGY_COST_WH > 0.0:
-            for worker in worker_nodes:
-                worker._apply_probing_energy_cost(PROBING_ENERGY_COST_WH)
+        def _build_worker_state_tail() -> List[float]:
+            lifespans: List[float] = [worker.get_lifespan() for worker in worker_nodes]
+            min_lifespan = min(lifespans)
+            if min_lifespan > 0:
+                lifespans_norm = [(ls - min_lifespan) for ls in lifespans]
+                max_lifespan = max(lifespans_norm)
+                if max_lifespan > 0:
+                    lifespans_norm = [(ls / max_lifespan) for ls in lifespans_norm]
+            else:
+                lifespans_norm = [worker.get_battery_residual_wh() for worker in worker_nodes]
 
-        lifespans: List[float] = []
-        for worker in worker_nodes:
-            lifespans.append(worker.get_lifespan())
+            tail: List[float] = []
+            if self._state_type == Node.StateType.ONLY_NUMBER:
+                for loads in self._loads_cluster:
+                    tail.append(float(sum(loads)))
+            elif self._state_type == Node.StateType.JOB_TYPE:
+                for loads in self._loads_cluster:
+                    for load in loads:
+                        tail.append(float(load))
+            else:
+                Log.mfatal(MODULE, "StateRepresentation not implemented")
+                sys.exit(1)
 
-        min_lifespan = min(lifespans)
-        if min_lifespan > 0:
-            lifespans = [(ls - min_lifespan) for ls in lifespans]
-            max_lifespan = max(lifespans)
-            lifespans = [(ls / max_lifespan) for ls in lifespans]
+            tail.extend(float(x) for x in lifespans_norm)
+            return tail
+
+        should_probe = True
+        if self._node_type == Node.NodeType.SCHEDULER:
+            self._state_probe_requests_count += 1
+            k_refresh = max(1, int(self._probing_state_refresh_every_k_jobs))
+            if (
+                k_refresh > 1
+                and self._last_worker_state_tail is not None
+                and ((self._state_probe_requests_count - 1) % k_refresh) != 0
+            ):
+                should_probe = False
+
+        if should_probe or self._last_worker_state_tail is None:
+            # Apply probing energy cost only when we actually refresh worker state.
+            if self._node_type == Node.NodeType.SCHEDULER and PROBING_ENERGY_COST_WH > 0.0:
+                for worker in worker_nodes:
+                    worker._apply_probing_energy_cost(PROBING_ENERGY_COST_WH)
+            worker_state_tail = _build_worker_state_tail()
+            if self._node_type == Node.NodeType.SCHEDULER:
+                self._last_worker_state_tail = list(worker_state_tail)
         else:
-            lifespans = [worker.get_battery_residual_wh() for worker in worker_nodes]
-            
-        if self._state_type == Node.StateType.ONLY_NUMBER:
-            state = [arrived_job.get_type()]
-            for loads in self._loads_cluster:
-                state.append(sum(loads))          
-            for wh in lifespans:
-                state.append(wh)
-        elif self._state_type == Node.StateType.JOB_TYPE:
-            state = [arrived_job.get_type()]
-            for loads in self._loads_cluster:
-                for load in loads:
-                    state.append(load)
-            for wh in lifespans:
-                state.append(wh)
-        else:
-            Log.mfatal(MODULE, "StateRepresentation not implemented")
-            sys.exit(1)
+            worker_state_tail = list(self._last_worker_state_tail)
 
+        state: List[float] = [float(arrived_job.get_type())]
+        state.extend(worker_state_tail)
         return state
 
     def _is_episode_over(self, job: Job, state: List[int]):

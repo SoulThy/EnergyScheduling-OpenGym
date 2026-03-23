@@ -107,3 +107,11 @@ DEFAULT_PROBING_ENERGY_COST_WH: Final[float] = _compute_default_probing_energy_c
 PROBING_ENERGY_COST_WH: Final[float] = float(
     os.getenv("PROBING_ENERGY_COST_WH", str(DEFAULT_PROBING_ENERGY_COST_WH))
 )
+
+# Intermittent probing control:
+# - 1 => probe on every scheduler state request (legacy behavior)
+# - K>1 => probe once every K scheduler state requests, reusing cached worker
+#   state features for the intermediate requests.
+PROBING_STATE_REFRESH_EVERY_K_JOBS: Final[int] = max(
+    1, int(os.getenv("PROBING_STATE_REFRESH_EVERY_K_JOBS", "1"))
+)
