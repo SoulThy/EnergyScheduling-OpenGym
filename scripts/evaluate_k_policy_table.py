@@ -122,6 +122,20 @@ def collect_k_dbs(runs_dir: Path) -> List[Path]:
     return out
 
 
+def is_db_readable(db_path: Path) -> bool:
+    try:
+        conn = sqlite3.connect(str(db_path))
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM jobs LIMIT 1")
+        cur.fetchone()
+        conn.close()
+        return True
+    except sqlite3.DatabaseError:
+        return False
+    except sqlite3.OperationalError:
+        return False
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Build K-policy table from baseline db and a folder of K runs."
@@ -172,6 +186,11 @@ def main() -> None:
         default=Path("results/k_policy_table.csv"),
         help="Output CSV path.",
     )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Fail on malformed/unreadable DBs instead of skipping them.",
+    )
     args = parser.parse_args()
 
     job_types = [int(x.strip()) for x in args.job_types.split(",") if x.strip() != ""]
@@ -189,9 +208,16 @@ def main() -> None:
         raise RuntimeError(f"No K run log.db found in {args.runs_dir} (need `_K<number>` in path).")
 
     rows: List[Row] = []
+    skipped: List[Path] = []
     for db_path in dbs:
         k = extract_k_from_path(db_path)
         if k is None:
+            continue
+        if not is_db_readable(db_path):
+            if args.strict:
+                raise RuntimeError(f"Malformed or unreadable DB: {db_path}")
+            skipped.append(db_path)
+            print(f"[warn] skipping malformed/unreadable DB: {db_path}")
             continue
 
         fps_k = fps_by_type(
@@ -268,6 +294,10 @@ def main() -> None:
     for jt in job_types:
         print(f"  - type {jt}: {fps_base[jt]:.6f}")
     print(f"- rows: {len(rows)}")
+    if skipped:
+        print(f"- skipped_malformed_dbs: {len(skipped)}")
+        for p in skipped:
+            print(f"  - {p}")
     print(f"- csv_out: {args.csv_out.resolve()}")
 
 
