@@ -179,10 +179,13 @@ def main() -> None:
     k_values = [args.only_k] if args.only_k is not None else _k_values(args.max_k)
 
     num_cores = MAX_PARALLEL_SIMULATIONS
+    # Use spawned children so each process imports config fresh after we set
+    # per-run env vars (MODEL_VERSION, PROBE_SIZE_BYTES, K).
+    ctx = multiprocessing.get_context("spawn")
     processes: list[multiprocessing.Process] = []
 
     for step_index, k_value in enumerate(k_values):
-        p = multiprocessing.Process(
+        p = ctx.Process(
             target=run_simulation_for_k,
             args=(step_index, k_value),
         )
