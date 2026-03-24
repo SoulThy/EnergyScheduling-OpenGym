@@ -257,6 +257,10 @@ def main() -> None:
         print(f"- POWER_MAX_TRANSMISSION_W: {_get('POWER_MAX_TRANSMISSION_W')}")
         print(f"- NET_SPEED_SCHEDULER_WORKER_MBIT: {_get('NET_SPEED_SCHEDULER_WORKER_MBIT')}")
         print(f"- PROBE_SIZE_BYTES: {_get('PROBE_SIZE_BYTES')}")
+        print(
+            f"- PROBING_STATE_REFRESH_EVERY_K_JOBS: "
+            f"{_get('PROBING_STATE_REFRESH_EVERY_K_JOBS')}"
+        )
         print(f"- PROBE_CROSSFACTOR_J: {_get('PROBE_CROSSFACTOR_J')}")
         print(f"- PROBING_ENERGY_COST_WH: {_get('PROBING_ENERGY_COST_WH')}")
         print(f"- NODE_MACHINE_SPEEDS: {_get('NODE_MACHINE_SPEEDS')}")
