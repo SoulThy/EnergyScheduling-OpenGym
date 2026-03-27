@@ -17,6 +17,7 @@ from config import (
     PROBE_CROSSFACTOR_J,
     PROBE_SIZE_BYTES,
     PROBING_ENERGY_COST_WH,
+    PROBING_STATE_REFRESH_EVERY_K_JOBS,
     WORKER_BATTERY_CAPACITIES,
     MODEL_VERSION,
 )
@@ -48,7 +49,20 @@ class ServiceDataStorage:
 
         os.makedirs(self._log_dir, exist_ok=True)
 
-        self._db = sqlite3.connect(':memory:')  # f"{self._log_dir}/log.db")
+        # LOG_DB_IN_MEMORY=1: use in-memory DB (faster, needs more RAM). Good for cloud (e.g. DigitalOcean).
+        # Unset or 0: use file-based DB (lower RAM, good for local runs).
+        _env_val = os.getenv("LOG_DB_IN_MEMORY", "").strip().lower()
+        self._db_in_memory = _env_val in ("1", "true", "yes")
+        if self._db_in_memory:
+            self._db_path = None
+            self._db = sqlite3.connect(":memory:")
+            Log.minfo(MODULE, "Log DB: in-memory (will write to file at end of run)")
+        else:
+            self._db_path = os.path.join(self._log_dir, "log.db")
+            if os.path.exists(self._db_path):
+                os.remove(self._db_path)
+            self._db = sqlite3.connect(self._db_path)
+            Log.minfo(MODULE, f"Log DB: file-based {self._db_path}")
         self._db_cur = self._db.cursor()
 
         self._init_db()
@@ -152,10 +166,11 @@ class ServiceDataStorage:
         Log.minfo(MODULE, "DB init")
 
     def _copy_db_to_file(self):
+        """Dump in-memory DB to log.db on disk. Only used when _db_in_memory is True."""
         Log.minfo(MODULE, "Copying memory db to file, please wait")
         start = time.time()
 
-        db_path = f"{self._log_dir}/log.db"
+        db_path = os.path.join(self._log_dir, "log.db")
         # Overwrite any existing log.db from previous runs so that the full
         # in-memory schema can be recreated without table-name conflicts.
         if os.path.exists(db_path):
@@ -226,6 +241,12 @@ class ServiceDataStorage:
         # save to files
         self._rewards[job.get_originator_node_uid()] += reward
         self._counter_total_jobs += 1
+
+        # Periodic commit so we don't hold one huge transaction in memory. Safe because:
+        # - Each done_job() is a single INSERT; no multi-statement transaction.
+        # - Nothing reads from the DB during the run; final commit in done_simulation() persists the rest.
+        if self._counter_total_jobs > 0 and self._counter_total_jobs % 50_000 == 0:
+            self._db.commit()
 
         if job.get_episode() % 100 == 0:
             self.print_data(only_to_file=True)
@@ -314,6 +335,7 @@ class ServiceDataStorage:
             "PROBE_SIZE_BYTES": str(PROBE_SIZE_BYTES),
             "PROBE_CROSSFACTOR_J": str(PROBE_CROSSFACTOR_J),
             "PROBING_ENERGY_COST_WH": str(PROBING_ENERGY_COST_WH),
+            "PROBING_STATE_REFRESH_EVERY_K_JOBS": str(PROBING_STATE_REFRESH_EVERY_K_JOBS),
             "POWER_MAX_TRANSMISSION_W": str(POWER_MAX_TRANSMISSION_W),
             "WORKER_BATTERY_CAPACITIES": ",".join(str(v) for v in WORKER_BATTERY_CAPACITIES),
             # Tag to distinguish different workload / environment models in analysis.
@@ -379,9 +401,9 @@ class ServiceDataStorage:
             except AttributeError:
                 pass
 
-        # Persist all pending changes in a single transaction before dumping to disk.
         self._db.commit()
-        self._copy_db_to_file()
+        if self._db_in_memory:
+            self._copy_db_to_file()
         self._save_models()
         self._db.close()
 

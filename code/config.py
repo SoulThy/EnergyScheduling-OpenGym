@@ -18,7 +18,7 @@ MAX_PARALLEL_SIMULATIONS: Final[int] = int(
     os.getenv("MAX_PARALLEL_SIMULATIONS", str(DEFAULT_MAX_PARALLEL_SIMULATIONS))
 )
 
-# High-level model selector (LEGACY, SMALL_JOBS_V2, ...).
+# High-level model selector (LEGACY, SMALL_JOBS_V2, SMALL_JOBS_V3, ...).
 MODEL_VERSION: Final[str] = os.getenv("MODEL_VERSION", "LEGACY")
 
 
@@ -106,4 +106,12 @@ DEFAULT_PROBING_ENERGY_COST_WH: Final[float] = _compute_default_probing_energy_c
 
 PROBING_ENERGY_COST_WH: Final[float] = float(
     os.getenv("PROBING_ENERGY_COST_WH", str(DEFAULT_PROBING_ENERGY_COST_WH))
+)
+
+# Intermittent probing control:
+# - 1 => probe on every scheduler state request (legacy behavior)
+# - K>1 => probe once every K scheduler state requests, reusing cached worker
+#   state features for the intermediate requests.
+PROBING_STATE_REFRESH_EVERY_K_JOBS: Final[int] = max(
+    1, int(os.getenv("PROBING_STATE_REFRESH_EVERY_K_JOBS", "1"))
 )

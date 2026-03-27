@@ -5,16 +5,43 @@
 import math
 import os
 import sqlite3
+from typing import List
 
 from matplotlib import pyplot as plt
 
+from config import MODEL_VERSION
 from log import Log
 from plot import PlotUtils
+from sim_builder import periodic_fps_target_bands
 from utils import Utils
 from utils_plot import UtilsPlot
 from datetime import datetime
 
 MODULE = "PlotRewardOverTime"
+
+
+def _fps_bands_for_log_db(db_path: str) -> tuple[List[float], List[float], str]:
+    """
+    Resolve periodic FPS max/min bands for the run that produced ``db_path``.
+
+    Prefer ``MODEL_VERSION`` stored in ``sim_config`` so old plots stay correct
+    even if ``config.MODEL_VERSION`` changes; fall back to current config.
+    """
+    model = MODEL_VERSION
+    db = sqlite3.connect(db_path)
+    cur = db.cursor()
+    try:
+        cur.execute("SELECT value FROM sim_config WHERE key = 'MODEL_VERSION'")
+        row = cur.fetchone()
+        if row and row[0]:
+            model = str(row[0])
+    except sqlite3.OperationalError:
+        pass
+    cur.close()
+    db.close()
+    mx, mn = periodic_fps_target_bands(model)
+    return [float(x) for x in mx], [float(x) for x in mn], model
+
 
 def plot_stacked(session_id, alpha, type, path_results_plot, path_results_data):
     llna_db_file = f"{path_results_data}/_log/learning/D_SARSA/WORKERS_OR_CLOUD/{session_id}_{alpha}{type}/log.db"
@@ -80,9 +107,11 @@ def plot_stacked(session_id, alpha, type, path_results_plot, path_results_data):
     # client fps
     #
 
-    LEGEND = ["60FPS Client (Min. 50)", "30FPS Client (Min. 20)", "15FPS Client (Min. 10)"]
-    FPS_LIMITS_MAX = [60, 30, 15]
-    FPS_LIMITS_MIN = [50, 20, 10]
+    FPS_LIMITS_MAX, FPS_LIMITS_MIN, _ = _fps_bands_for_log_db(llna_db_file)
+    LEGEND = [
+        f"{int(FPS_LIMITS_MAX[i])}FPS Client (Min. {int(FPS_LIMITS_MIN[i])})"
+        for i in range(min(3, len(FPS_LIMITS_MAX)))
+    ]
 
     db = sqlite3.connect(llna_db_file)
     cur = db.cursor()
@@ -118,14 +147,25 @@ def plot_stacked(session_id, alpha, type, path_results_plot, path_results_data):
         line, = ax[1].plot(x_arr[i], y_arr[i], markerfacecolor='None', linewidth=0.6,
                         marker=markers[i % len(markers)],
                         markersize=3, markeredgewidth=0.6)
-        ax[1].fill_between(x, FPS_LIMITS_MAX[i], FPS_LIMITS_MIN[i], color=cmap_def(i), alpha=0.3, linewidth=0)
+        ax[1].fill_between(
+            x_arr[i],
+            FPS_LIMITS_MAX[i],
+            FPS_LIMITS_MIN[i],
+            color=cmap_def(i),
+            alpha=0.3,
+            linewidth=0,
+        )
 
         legend_arr.append(line)
 
     ax[1].legend(legend_arr, LEGEND, fontsize="small",loc="lower left")
 
     ax[1].set_ylabel(r"$\omega_e$ (fps)")
-    ax[1].set_ylim([0, max(FPS_LIMITS_MAX)])
+    y_top = max(FPS_LIMITS_MAX)
+    for ys in y_arr:
+        if ys:
+            y_top = max(y_top, max(ys))
+    ax[1].set_ylim([0, y_top])
     ax[1].set_xlim([0, simulation_time])
 
     #
@@ -199,7 +239,7 @@ if __name__ == "__main__":
     alpha = "0.00"
     type = "_FAILURE"
     SESSION_ID = datetime.now().strftime("%Y%m%d")
-    PATH_RESULTS = "./results"
+    PATH_RESULTS = "../results"
     PATH_RESULTS_PLOT = f"{PATH_RESULTS}/plot"
     PATH_RESULTS_DATA = f"../results/data"
 
