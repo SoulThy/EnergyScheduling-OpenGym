@@ -5,16 +5,8 @@ import sys
 from pathlib import Path
 from typing import Any, Dict
 
-from config import WORKER_BATTERY_CAPACITIES
-
-
 def compute_stats(db_path: Path) -> Dict[str, Any]:
-    """
-    Compute aggregate statistics from a log.db file produced by ServiceDataStorage.
-
-    This is intended for quick, script-friendly comparisons between runs
-    (e.g., D-SARSA with vs without probing energy cost).
-    """
+    """Compute thesis-oriented aggregate metrics from a simulation log.db."""
     if not db_path.exists():
         raise FileNotFoundError(f"Database file not found: {db_path}")
 
@@ -22,198 +14,91 @@ def compute_stats(db_path: Path) -> Dict[str, Any]:
     try:
         cur = conn.cursor()
 
-        # ----------------------------------------------------------------------------
-        # Simulation configuration (if available)
-        # ----------------------------------------------------------------------------
+        # Simulation configuration (best effort).
         sim_config: Dict[str, str] = {}
         try:
             cur.execute("SELECT key, value FROM sim_config;")
             for key, value in cur.fetchall():
                 sim_config[str(key)] = str(value)
         except sqlite3.OperationalError:
-            # Older log.db files won't have this table.
             sim_config = {}
 
-        # ----------------------------------------------------------------------------
-        # Core job / timing statistics
-        # ----------------------------------------------------------------------------
-        # Total jobs (created)
+        # Core job metrics.
         cur.execute("SELECT COUNT(*) FROM jobs;")
         (total_jobs,) = cur.fetchone()
 
-        # Executed / rejected
         cur.execute("SELECT COALESCE(SUM(executed), 0), COALESCE(SUM(rejected), 0) FROM jobs;")
         executed_jobs, rejected_jobs = cur.fetchone()
 
-        # Over-deadline jobs (regardless of executed/rejected)
-        cur.execute("SELECT COALESCE(SUM(over_deadline), 0) FROM jobs;")
-        (over_deadline_jobs,) = cur.fetchone()
-
-        # Over-deadline jobs among executed and not rejected jobs.
-        # This matches the metric used by `run_simulation_small_jobs_v3_deadline_sweep.py`
-        # and by other FPS/deadline selection rules.
+        # Deadline misses among executed and not rejected jobs.
         cur.execute(
             "SELECT COALESCE(SUM(over_deadline), 0), COUNT(*) "
             "FROM jobs WHERE executed = 1 AND rejected = 0"
         )
-        (
-            over_deadline_jobs_executed_not_rejected,
-            over_deadline_den_executed_not_rejected,
-        ) = cur.fetchone()
+        deadline_miss_jobs, executed_not_rejected_jobs = cur.fetchone()
 
-        # Jobs that were executed and not over deadline: our notion of "successful" jobs.
+        # Success = executed and within deadline.
         cur.execute(
             "SELECT COALESCE(SUM(CASE WHEN executed = 1 AND over_deadline = 0 "
             "THEN 1 ELSE 0 END), 0) FROM jobs;"
         )
         (successful_jobs,) = cur.fetchone()
 
-        # Basic timing window (simulation span) using generation and end-to-end time_total.
-        # time_total is the Job.get_total_time(), so end_time ~= generated_at + time_total.
-        cur.execute(
-            "SELECT MIN(generated_at), MAX(generated_at + time_total) FROM jobs "
-            "WHERE generated_at IS NOT NULL AND time_total IS NOT NULL;"
-        )
-        row = cur.fetchone()
-        min_generated, max_done = row if row is not None else (None, None)
-
-        if min_generated is not None and max_done is not None:
-            sim_span_s = max_done - min_generated
-        else:
-            sim_span_s = 0.0
-
-        # Effective FPS as "executed jobs per simulated second".
-        effective_fps = (executed_jobs / sim_span_s) if sim_span_s > 0 else 0.0
-
-        # Average end-to-end latency per job (s) and for executed jobs only.
-        cur.execute("SELECT AVG(time_total) FROM jobs;")
-        (avg_total_time_all,) = cur.fetchone()
-
-        cur.execute("SELECT AVG(time_total) FROM jobs WHERE executed = 1;")
-        (avg_total_time_executed,) = cur.fetchone()
-
-        # Average execution time (service time) for executed jobs (from time_total_execution).
-        cur.execute("SELECT AVG(time_total_execution) FROM jobs WHERE executed = 1;")
-        (avg_execution_time_s,) = cur.fetchone()
-
-        # Probing energy per node (Wh) – available for new simulations where the
-        # probing_energy table exists.
-        probing_energy_by_node: Dict[int, float] = {}
-        has_probing_energy_table = False
-        try:
-            cur.execute("SELECT node_uid, energy_wh FROM probing_energy;")
-            has_probing_energy_table = True
-            for node_uid, energy_wh in cur.fetchall():
-                probing_energy_by_node[int(node_uid)] = float(energy_wh)
-        except sqlite3.OperationalError:
-            # Older log.db files won't have this table; keep stats minimal.
-            probing_energy_by_node = {}
-            has_probing_energy_table = False
-
-        total_probing_energy_wh = sum(probing_energy_by_node.values())
-        total_battery_capacity_wh = float(sum(WORKER_BATTERY_CAPACITIES))
-        probing_energy_share = (
-            (total_probing_energy_wh / total_battery_capacity_wh) if total_battery_capacity_wh > 0 else 0.0
-        )
-
-        # Energy breakdown: idle / execution (worker_energy_breakdown).
-        total_idle_wh = 0.0
-        total_execution_wh = 0.0
+        # Battery indicators from round logs.
+        battery_mean_by_worker: Dict[int, float] = {}
+        battery_last_by_worker: Dict[int, float] = {}
         try:
             cur.execute(
-                "SELECT node_uid, idle_wh, execution_wh FROM worker_energy_breakdown;"
+                "SELECT worker_id, AVG(battery_residual), MAX(time) "
+                "FROM round GROUP BY worker_id;"
             )
-            for _uid, idle_wh, execution_wh in cur.fetchall():
-                total_idle_wh += float(idle_wh or 0.0)
-                total_execution_wh += float(execution_wh or 0.0)
+            rows = cur.fetchall()
+            for worker_id, avg_battery, _max_time in rows:
+                battery_mean_by_worker[int(worker_id)] = float(avg_battery or 0.0)
+
+            for worker_id in battery_mean_by_worker.keys():
+                cur.execute(
+                    "SELECT battery_residual FROM round "
+                    "WHERE worker_id = ? ORDER BY time DESC LIMIT 1;",
+                    (worker_id,),
+                )
+                row = cur.fetchone()
+                battery_last_by_worker[worker_id] = float(row[0] if row else 0.0)
         except sqlite3.OperationalError:
-            pass
+            battery_mean_by_worker = {}
+            battery_last_by_worker = {}
 
-        execution_energy_share = (
-            (total_execution_wh / total_battery_capacity_wh) if total_battery_capacity_wh > 0 else 0.0
-        )
-        idle_energy_share = (
-            (total_idle_wh / total_battery_capacity_wh) if total_battery_capacity_wh > 0 else 0.0
-        )
-
-        # Probing overhead relative to actual work ("execution") energy.
-        # If execution was zero, we keep it as None.
-        probe_over_execution = (total_probing_energy_wh / total_execution_wh) if total_execution_wh > 0 else None
-        probe_over_execution_percent = (probe_over_execution * 100.0) if probe_over_execution is not None else None
-
-        # ----------------------------------------------------------------------------
-        # Expected average job size (MB) from sim_config payloads and rates
-        # ----------------------------------------------------------------------------
-        periodic_size_mb = 0.050
-        exp_size_mb = 0.100
-        if "JOB_PERIODIC_PAYLOAD_SIZE_MB" in sim_config:
-            try:
-                periodic_size_mb = float(sim_config["JOB_PERIODIC_PAYLOAD_SIZE_MB"])
-            except ValueError:
-                pass
-        if "JOB_EXPONENTIAL_PAYLOAD_SIZE_MB" in sim_config:
-            try:
-                exp_size_mb = float(sim_config["JOB_EXPONENTIAL_PAYLOAD_SIZE_MB"])
-            except ValueError:
-                pass
-
-        # Use rates from sim_config when present (SMALL_JOBS_V1 has 120,60,30 and 20).
-        rate_periodic = 105.0
-        rate_exponential = 10.0
-        if "JOB_PERIODIC_RATES_FPS" in sim_config and "JOB_EXPONENTIAL_RATES_FPS" in sim_config:
-            try:
-                rate_periodic = sum(float(x) for x in sim_config["JOB_PERIODIC_RATES_FPS"].split(","))
-                rate_exponential = sum(float(x) for x in sim_config["JOB_EXPONENTIAL_RATES_FPS"].split(","))
-            except ValueError:
-                pass
-        total_rate = rate_periodic + rate_exponential
-        p_periodic = rate_periodic / total_rate if total_rate > 0 else 105.0 / 115.0
-        p_exponential = 1.0 - p_periodic
-        avg_job_size_mb = p_periodic * periodic_size_mb + p_exponential * exp_size_mb
+        battery_last_values = list(battery_last_by_worker.values())
+        if battery_last_values:
+            battery_last_avg = sum(battery_last_values) / float(len(battery_last_values))
+            battery_last_min = min(battery_last_values)
+        else:
+            battery_last_avg = None
+            battery_last_min = None
 
         return {
             "sim_config": sim_config,
             "total_jobs": int(total_jobs),
             "executed_jobs": int(executed_jobs),
             "rejected_jobs": int(rejected_jobs),
-            "over_deadline_jobs": int(over_deadline_jobs),
-            "over_deadline_jobs_executed_not_rejected": int(
-                over_deadline_jobs_executed_not_rejected
-            ),
             "successful_jobs": int(successful_jobs),
-            "job_success_ratio": (
+            "success_rate": (
                 float(successful_jobs) / float(total_jobs) if total_jobs > 0 else 0.0
             ),
-            "over_deadline_ratio_all": (
-                float(over_deadline_jobs) / float(total_jobs) if total_jobs > 0 else 0.0
-            ),
-            "over_deadline_ratio_executed_not_rejected": (
-                float(over_deadline_jobs_executed_not_rejected)
-                / float(over_deadline_den_executed_not_rejected)
-                if over_deadline_den_executed_not_rejected > 0
+            "deadline_miss_jobs": int(deadline_miss_jobs),
+            "deadline_miss_rate": (
+                float(deadline_miss_jobs) / float(executed_not_rejected_jobs)
+                if executed_not_rejected_jobs > 0
                 else 0.0
             ),
-            "sim_span_s": float(sim_span_s),
-            "effective_fps": float(effective_fps),
-            "avg_total_time_all_s": float(avg_total_time_all) if avg_total_time_all is not None else None,
-            "avg_total_time_executed_s": (
-                float(avg_total_time_executed) if avg_total_time_executed is not None else None
+            "reject_rate": (
+                float(rejected_jobs) / float(total_jobs) if total_jobs > 0 else 0.0
             ),
-            "avg_execution_time_s": (
-                float(avg_execution_time_s) if avg_execution_time_s is not None else None
-            ),
-            "avg_job_size_mb": avg_job_size_mb,
-            "probing_energy_by_node_wh": probing_energy_by_node,
-            "total_probing_energy_wh": total_probing_energy_wh,
-            "total_battery_capacity_wh": total_battery_capacity_wh,
-            "probing_energy_share": probing_energy_share,
-            "total_idle_wh": total_idle_wh,
-            "total_execution_wh": total_execution_wh,
-            "execution_energy_share": execution_energy_share,
-            "idle_energy_share": idle_energy_share,
-            "probe_over_execution": probe_over_execution,
-            "probe_over_execution_percent": probe_over_execution_percent,
-            "has_probing_energy_table": has_probing_energy_table,
+            "executed_not_rejected_jobs": int(executed_not_rejected_jobs),
+            "battery_mean_by_worker_wh": battery_mean_by_worker,
+            "battery_last_by_worker_wh": battery_last_by_worker,
+            "battery_last_avg_wh": battery_last_avg,
+            "battery_last_min_wh": battery_last_min,
         }
     finally:
         conn.close()
@@ -222,8 +107,7 @@ def compute_stats(db_path: Path) -> Dict[str, Any]:
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Compute aggregate statistics from a log.db file "
-            "(jobs, deadlines, effective FPS, basic latencies)."
+            "Compute compact, thesis-oriented aggregate metrics from a log.db file."
         )
     )
     parser.add_argument(
@@ -241,114 +125,47 @@ def main() -> None:
 
     print(f"Database: {args.db_file}")
 
-    # -------------------------------------------------------------------------
-    # Simulation configuration overview (printed first)
-    # -------------------------------------------------------------------------
+    # Simulation configuration overview.
     cfg = stats["sim_config"]
-    print("Simulation configuration:")
+    print("Simulation configuration (useful fields):")
     if cfg:
         def _get(name: str, default: str = "n/a") -> str:
             return cfg.get(name, default)
 
         print(f"- MODEL_VERSION: {_get('MODEL_VERSION')}")
+        print(f"- SCORE_SIMPLE_WEIGHT_Q: {_get('SCORE_SIMPLE_WEIGHT_Q')}")
+        print(f"- SCORE_SIMPLE_WEIGHT_B: {_get('SCORE_SIMPLE_WEIGHT_B')}")
+        print(f"- SCORE_SIMPLE_WEIGHT_F: {_get('SCORE_SIMPLE_WEIGHT_F')}")
         print(f"- WORKER_BATTERY_CAPACITIES: {_get('WORKER_BATTERY_CAPACITIES')}")
-        print(f"- POWER_IDLE_W: {_get('POWER_IDLE_W')}")
-        print(f"- POWER_MAX_CPU_W: {_get('POWER_MAX_CPU_W')}")
-        print(f"- POWER_MAX_TRANSMISSION_W: {_get('POWER_MAX_TRANSMISSION_W')}")
-        print(f"- NET_SPEED_SCHEDULER_WORKER_MBIT: {_get('NET_SPEED_SCHEDULER_WORKER_MBIT')}")
-        print(f"- PROBE_SIZE_BYTES: {_get('PROBE_SIZE_BYTES')}")
-        print(
-            f"- PROBING_STATE_REFRESH_EVERY_K_JOBS: "
-            f"{_get('PROBING_STATE_REFRESH_EVERY_K_JOBS')}"
-        )
-        print(f"- PROBE_CROSSFACTOR_J: {_get('PROBE_CROSSFACTOR_J')}")
-        print(f"- PROBING_ENERGY_COST_WH: {_get('PROBING_ENERGY_COST_WH')}")
         print(f"- NODE_MACHINE_SPEEDS: {_get('NODE_MACHINE_SPEEDS')}")
-        print(f"- JOB_PERIODIC_PAYLOAD_SIZES_MB: {_get('JOB_PERIODIC_PAYLOAD_SIZES_MB')}")
-        print(f"- JOB_EXPONENTIAL_PAYLOAD_SIZES_MB: {_get('JOB_EXPONENTIAL_PAYLOAD_SIZES_MB')}")
-        print(f"- JOB_PERIODIC_DURATIONS_S: {_get('JOB_PERIODIC_DURATIONS_S')}")
-        print(f"- JOB_EXPONENTIAL_DURATIONS_S: {_get('JOB_EXPONENTIAL_DURATIONS_S')}")
-        print(f"- JOB_PERIODIC_DURATION_STD_DEVS_S: {_get('JOB_PERIODIC_DURATION_STD_DEVS_S')}")
-        print(f"- JOB_EXPONENTIAL_DURATION_STD_DEVS_S: {_get('JOB_EXPONENTIAL_DURATION_STD_DEVS_S')}")
-        print(f"- JOB_PERIODIC_RATES_FPS: {_get('JOB_PERIODIC_RATES_FPS')}")
-        print(f"- JOB_EXPONENTIAL_RATES_FPS: {_get('JOB_EXPONENTIAL_RATES_FPS')}")
     else:
         print("  (no sim_config table in this log.db)")
 
     print()
-    print("Aggregate job and timing statistics:")
+    print("Core policy metrics:")
     print(f"- total_jobs: {stats['total_jobs']}")
     print(f"- executed_jobs: {stats['executed_jobs']}")
     print(f"- rejected_jobs: {stats['rejected_jobs']}")
+    print(f"- successful_jobs: {stats['successful_jobs']}")
+    print(f"- success_rate: {stats['success_rate'] * 100:.2f}%")
     print(
-        f"- over_deadline_jobs (executed & not rejected): "
-        f"{stats['over_deadline_jobs_executed_not_rejected']} "
-        f"({stats['over_deadline_ratio_executed_not_rejected'] * 100:.2f}% of executed & not rejected jobs)"
+        f"- deadline_miss_jobs: {stats['deadline_miss_jobs']} "
+        f"({stats['deadline_miss_rate'] * 100:.2f}% of executed & non-rejected jobs)"
     )
-    print(
-        f"- over_deadline_jobs (all jobs): {stats['over_deadline_jobs']} "
-        f"({stats['over_deadline_ratio_all'] * 100:.2f}% of all jobs)"
-    )
-    print(
-        f"- successful_jobs: {stats['successful_jobs']} "
-        f"({stats['job_success_ratio'] * 100:.2f}% of all jobs)"
-    )
-    print(f"- sim_span_s: {stats['sim_span_s']:.2f}")
-    print(f"- effective_fps (executed_jobs / sim_span_s): {stats['effective_fps']:.3f}")
 
-    avg_all = stats['avg_total_time_all_s']
-    avg_exec = stats['avg_total_time_executed_s']
-    if avg_all is not None:
-        print(f"- avg_total_time_all_s: {avg_all:.4f}")
-    else:
-        print("- avg_total_time_all_s: n/a")
-    if avg_exec is not None:
-        print(f"- avg_total_time_executed_s: {avg_exec:.4f}")
-    else:
-        print("- avg_total_time_executed_s: n/a")
-    avg_exec_time = stats.get("avg_execution_time_s")
-    if avg_exec_time is not None:
-        print(f"- avg_execution_time_s (service time, executed jobs): {avg_exec_time:.6f}")
-    else:
-        print("- avg_execution_time_s: n/a")
+    print(f"- reject_rate: {stats['reject_rate'] * 100:.2f}%")
 
-    print(f"- avg_job_size_mb (expected): {stats['avg_job_size_mb']:.6f}")
-
-    # Probing-specific statistics (only for runs where we logged probing energy).
-    pe_by_node = stats["probing_energy_by_node_wh"]
-    if stats.get("has_probing_energy_table", False):
-        print("- probing_energy_by_node_wh:")
-        if pe_by_node:
-            for node_uid, energy_wh in sorted(pe_by_node.items()):
-                print(f"  - node {node_uid}: {energy_wh:.6e} Wh")
-        print(f"- total_probing_energy_wh: {stats['total_probing_energy_wh']:.6e} Wh")
-        print(f"- total_battery_capacity_wh: {stats['total_battery_capacity_wh']:.3f} Wh")
-        print(
-            f"- probing_energy_share: {stats['probing_energy_share'] * 100:.4f}% "
-            "(total_probing_energy / sum_worker_capacities)"
-        )
-        if "execution_energy_share" in stats:
-            print(
-                f"- execution_energy_share: {stats['execution_energy_share'] * 100:.4f}% "
-                "(CPU processing)"
-            )
-            p_over_exec = stats.get("probe_over_execution")
-            if p_over_exec is not None:
-                print(
-                    f"- probe_over_execution: {p_over_exec:.6f}x "
-                    "(probing_energy / execution_energy)"
-                )
-                print(
-                    f"- probe_over_execution_percent: {stats.get('probe_over_execution_percent', 0.0):.4f}%"
-                )
-            else:
-                print("- probe_over_execution: n/a (execution_energy=0)")
-            print(
-                f"- idle_energy_share: {stats['idle_energy_share'] * 100:.4f}% "
-                "(idle 1 s per round)"
-            )
+    print()
+    print("Battery indicators:")
+    if stats["battery_last_by_worker_wh"]:
+        for worker_id, value in sorted(stats["battery_last_by_worker_wh"].items()):
+            print(f"- worker {worker_id} last_battery_wh: {value:.4f}")
+        print(f"- battery_last_avg_wh: {stats['battery_last_avg_wh']:.4f}")
+        print(f"- battery_last_min_wh: {stats['battery_last_min_wh']:.4f}")
+        for worker_id, value in sorted(stats["battery_mean_by_worker_wh"].items()):
+            print(f"- worker {worker_id} avg_battery_wh: {value:.4f}")
     else:
-        print("- probing_energy: n/a (no probing_energy table in this log.db)")
+        print("- n/a (round table not available in this log.db)")
 
 
 if __name__ == "__main__":
