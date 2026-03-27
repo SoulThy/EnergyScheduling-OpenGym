@@ -25,6 +25,9 @@ from config import (
     POWER_MAX_TRANSMISSION_W,
     PROBING_ENERGY_COST_WH,
     PROBING_STATE_REFRESH_EVERY_K_JOBS,
+    SCORE_SIMPLE_WEIGHT_B,
+    SCORE_SIMPLE_WEIGHT_F,
+    SCORE_SIMPLE_WEIGHT_Q,
 )
 from function_approximation import DSPSarsaTiling
 from job import Job
@@ -107,6 +110,7 @@ class Node:
         LEAST_LOADED_AWARE_CLOUD = 5
         MAXIMUM_LIFESPANE = 6
         GYMNASIUM = 7
+        SCORE_SIMPLE = 8
 
     class DistributionArrivals(Enum):
         POISSON = 0
@@ -1555,6 +1559,59 @@ class Node:
                 action = lifespans.index(max(lifespans)) + 2
             else:
                 raise RuntimeError("Action space not supported")
+
+        elif self._session_no_learning_policy == Node.NoLearningPolicy.SCORE_SIMPLE:
+            worker_actions = []
+            for candidate_action in possible_actions:
+                if self._actions_space == Node.ActionsSpace.ONLY_WORKERS:
+                    if candidate_action > 0:
+                        worker_actions.append(candidate_action)
+                elif self._actions_space == Node.ActionsSpace.WORKERS_OR_CLOUD:
+                    if candidate_action > 1:
+                        worker_actions.append(candidate_action)
+
+            if len(worker_actions) == 0:
+                # No valid worker action: preserve legacy fallback semantics.
+                if self._actions_space == Node.ActionsSpace.WORKERS_OR_CLOUD and 1 in possible_actions:
+                    return 1  # cloud
+                return 0  # reject
+
+            best_score = float("inf")
+            best_actions = []
+            for candidate_action in worker_actions:
+                if self._actions_space == Node.ActionsSpace.ONLY_WORKERS:
+                    worker_idx = candidate_action - 1
+                else:
+                    worker_idx = candidate_action - 2
+
+                worker = self._service_discovery.get_worker_in_cluster_by_index(
+                    self._node_belong_to_cluster,
+                    worker_idx,
+                )
+
+                # Qi: normalized queue load.
+                qi = float(sum(self._loads_cluster[worker_idx])) / float(max(1, self._max_jobs_in_queue))
+                # Bi: battery penalty (higher when battery is low).
+                bi = 1.0 - float(worker.get_battery_residual_percentage())
+                # Fi: failure penalty.
+                fi = 1.0 if worker.is_died() else 0.0
+
+                score = (
+                    SCORE_SIMPLE_WEIGHT_Q * qi
+                    + SCORE_SIMPLE_WEIGHT_B * bi
+                    + SCORE_SIMPLE_WEIGHT_F * fi
+                )
+
+                if score < best_score:
+                    best_score = score
+                    best_actions = [candidate_action]
+                elif score == best_score:
+                    best_actions.append(candidate_action)
+
+            if len(best_actions) == 1:
+                action = best_actions[0]
+            else:
+                action = best_actions[random.randint(0, len(best_actions) - 1)]
 
         else:
             Log.merr(f"{MODULE}#{self._uid}", f"Policy {self._session_no_learning_policy} not implemented")

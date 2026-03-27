@@ -115,3 +115,16 @@ PROBING_ENERGY_COST_WH: Final[float] = float(
 PROBING_STATE_REFRESH_EVERY_K_JOBS: Final[int] = max(
     1, int(os.getenv("PROBING_STATE_REFRESH_EVERY_K_JOBS", "1"))
 )
+
+# ---------------------------------------------------------------------------
+# SCORE_SIMPLE heuristic policy weights
+# ---------------------------------------------------------------------------
+# Scheduler score for a worker i:
+#   score_i = wq * Qi + wb * Bi + wf * Fi
+# where:
+#   Qi = normalized queue load
+#   Bi = battery penalty (1 - residual_percentage)
+#   Fi = failure penalty (1 if died else 0)
+SCORE_SIMPLE_WEIGHT_Q: Final[float] = float(os.getenv("SCORE_SIMPLE_WEIGHT_Q", "0.5"))
+SCORE_SIMPLE_WEIGHT_B: Final[float] = float(os.getenv("SCORE_SIMPLE_WEIGHT_B", "0.3"))
+SCORE_SIMPLE_WEIGHT_F: Final[float] = float(os.getenv("SCORE_SIMPLE_WEIGHT_F", "0.2"))
