@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Final, Tuple
 
 from default_config import (
@@ -20,6 +21,30 @@ MAX_PARALLEL_SIMULATIONS: Final[int] = int(
 
 # High-level model selector (LEGACY, SMALL_JOBS_V2, SMALL_JOBS_V3, ...).
 MODEL_VERSION: Final[str] = os.getenv("MODEL_VERSION", "LEGACY")
+
+# Repository layout: ``code/config.py`` -> parent is repo root.
+_CODE_DIR: Final[Path] = Path(__file__).resolve().parent
+_REPO_ROOT: Final[Path] = _CODE_DIR.parent
+
+
+def get_results_data_dir() -> Path:
+    """Directory that contains ``_log/`` (same root ``ServiceDataStorage`` uses).
+
+    Default: ``<repo>/results/data`` so paths do not depend on the process cwd.
+
+    Override: set env ``RESULTS_DATA_DIR`` to the absolute path of that ``data``
+    directory (the folder that should contain ``_log``).
+    """
+    override = os.getenv("RESULTS_DATA_DIR", "").strip()
+    if override:
+        return Path(override).expanduser().resolve()
+    return (_REPO_ROOT / "results" / "data").resolve()
+
+
+_RESULTS_DATA_PATH: Final[Path] = get_results_data_dir()
+RESULTS_DATA_DIR: Final[str] = str(_RESULTS_DATA_PATH)
+RESULTS_TABLE_DIR: Final[str] = str(_RESULTS_DATA_PATH.parent / "table")
+RESULTS_PLOT_DIR: Final[str] = str(_RESULTS_DATA_PATH.parent / "plot")
 
 
 def _parse_worker_battery_capacities(env_value: str | None) -> Tuple[int, int, int] | None:

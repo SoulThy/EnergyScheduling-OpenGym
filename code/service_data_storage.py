@@ -12,17 +12,18 @@ import time
 from typing import List
 
 from config import (
+    MODEL_VERSION,
     NET_SPEED_SCHEDULER_WORKER_MBIT,
     POWER_MAX_TRANSMISSION_W,
     PROBE_CROSSFACTOR_J,
     PROBE_SIZE_BYTES,
     PROBING_ENERGY_COST_WH,
     PROBING_STATE_REFRESH_EVERY_K_JOBS,
+    RESULTS_DATA_DIR,
     SCORE_SIMPLE_WEIGHT_B,
     SCORE_SIMPLE_WEIGHT_F,
     SCORE_SIMPLE_WEIGHT_Q,
     WORKER_BATTERY_CAPACITIES,
-    MODEL_VERSION,
 )
 from job import Job
 from log import Log
@@ -31,9 +32,7 @@ from node import Node
 MODULE = "ServiceDataStorage"
 
 BASE_LOG_DIR = "_log"
-PATH_RESULTS = "../results"
-PATH_RESULTS_DATA = f"{PATH_RESULTS}/data"
-os.makedirs(PATH_RESULTS_DATA, exist_ok=True)
+os.makedirs(RESULTS_DATA_DIR, exist_ok=True)
 
 # noinspection SqlNoDataSourceInspection
 class ServiceDataStorage:
@@ -46,9 +45,22 @@ class ServiceDataStorage:
 
         # init dirs and db
         if learning_type == Node.LearningType.NO_LEARNING:
-            self._log_dir = f"{PATH_RESULTS_DATA}/{BASE_LOG_DIR}/no-learning/{no_learning_policy.name}/{session_id}"
+            self._log_dir = os.path.join(
+                RESULTS_DATA_DIR,
+                BASE_LOG_DIR,
+                "no-learning",
+                no_learning_policy.name,
+                session_id,
+            )
         else:
-            self._log_dir = f"{PATH_RESULTS_DATA}/{BASE_LOG_DIR}/learning/{learning_type.name}/{action_space.name}/{session_id}"
+            self._log_dir = os.path.join(
+                RESULTS_DATA_DIR,
+                BASE_LOG_DIR,
+                "learning",
+                learning_type.name,
+                action_space.name,
+                session_id,
+            )
 
         os.makedirs(self._log_dir, exist_ok=True)
 

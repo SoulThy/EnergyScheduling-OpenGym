@@ -1,15 +1,18 @@
 from datetime import datetime
 import os
 import sqlite3
-from datetime import datetime
+
 import matplotlib.pyplot as plt
 
+from config import RESULTS_DATA_DIR
 from node import Node
 
 SESSION_ID = datetime.now().strftime("%Y%m%d")
 
-# Define the base folder containing the database folders
-base_folder = "_log/learning/D_SARSA/WORKERS_OR_CLOUD"
+_LOG_ROOT = os.path.join(RESULTS_DATA_DIR, "_log")
+_DSARSA_WOC = os.path.join(_LOG_ROOT, "learning", "D_SARSA", "WORKERS_OR_CLOUD")
+_DSARSA_OW = os.path.join(_LOG_ROOT, "learning", "D_SARSA", "ONLY_WORKERS")
+_NO_LEARNING_ROOT = os.path.join(_LOG_ROOT, "no-learning")
 
 # Define the range of alpha values
 alpha_range = [i / 100 for i in range(0, 101, 5)]  # [0.0, 0.5, 1.0]
@@ -18,7 +21,7 @@ alpha_range = [i / 100 for i in range(0, 101, 5)]  # [0.0, 0.5, 1.0]
 rows = []
 
 def add_row(folder_name, alpha):
-    db_file = f"{folder_name}/log.db"
+    db_file = os.path.join(folder_name, "log.db")
 
     # Connect to the database
     db = sqlite3.connect(db_file)
@@ -133,21 +136,13 @@ def add_row(folder_name, alpha):
     ]
     
     rows.append(row)
-        
-# Iterate over each alpha value
-for alpha in alpha_range:
-    # Set the folder name based on the alpha value
-    folder_name = f"{os.getcwd()}/{base_folder}/{SESSION_ID}_{alpha:.2f}"
-    print(folder_name)
-    # Check if the folder exists
-    if os.path.exists(folder_name):
-        # Get the database file path
-        add_row(folder_name, f'{alpha:.2f}')
-        
-# Define the base folder containing the database folders
-base_folder = "_log/no-learning"
 
-# Define the range of alpha values
+for alpha in alpha_range:
+    folder_name = os.path.join(_DSARSA_WOC, f"{SESSION_ID}_{alpha:.2f}")
+    print(folder_name)
+    if os.path.exists(folder_name):
+        add_row(folder_name, f"{alpha:.2f}")
+
 policies = [
     Node.NoLearningPolicy.LEAST_LOADED_AWARE_CLOUD,
     Node.NoLearningPolicy.MAXIMUM_LIFESPANE,
@@ -156,12 +151,13 @@ policies = [
 ]
 
 for policy in policies:
-    # Set the folder name based on the alpha value
-    folder_name = f"{os.getcwd()}/{base_folder}/{policy.name}/{SESSION_ID}_{policy.name}_WORKERS_OR_CLOUD"
+    folder_name = os.path.join(
+        _NO_LEARNING_ROOT,
+        policy.name,
+        f"{SESSION_ID}_{policy.name}_WORKERS_OR_CLOUD",
+    )
     print(folder_name)
-    # Check if the folder exists
     if os.path.exists(folder_name):
-        # Get the database file path
         add_row(folder_name, policy.name)
        
 
@@ -187,29 +183,16 @@ with open(file_path, "w") as file:
 # Notify that the file has been created
 print(f"Table data has been saved to '{file_path}'.")
 
-# Define the base folder containing the database folders
-base_folder = "_log/learning/D_SARSA/ONLY_WORKERS"
-
-# Define the range of alpha values
 alpha_range = [i / 100 for i in range(0, 101, 5)]  # [0.0, 0.5, 1.0]
 
-# Create an empty list to store the rows
 rows = []
-        
-# Iterate over each alpha value
-for alpha in alpha_range:
-    # Set the folder name based on the alpha value
-    folder_name = f"{os.getcwd()}/{base_folder}/{SESSION_ID}_{alpha:.2f}"
-    print(folder_name)
-    # Check if the folder exists
-    if os.path.exists(folder_name):
-        # Get the database file path
-        add_row(folder_name, f'{alpha:.2f}')
-        
-# Define the base folder containing the database folders
-base_folder = "_log/no-learning"
 
-# Define the range of alpha values
+for alpha in alpha_range:
+    folder_name = os.path.join(_DSARSA_OW, f"{SESSION_ID}_{alpha:.2f}")
+    print(folder_name)
+    if os.path.exists(folder_name):
+        add_row(folder_name, f"{alpha:.2f}")
+
 policies = [
     Node.NoLearningPolicy.LEAST_LOADED_NOT_AWARE,
     Node.NoLearningPolicy.MAXIMUM_LIFESPANE,
@@ -218,12 +201,13 @@ policies = [
 ]
 
 for policy in policies:
-    # Set the folder name based on the alpha value
-    folder_name = f"{os.getcwd()}/{base_folder}/{policy.name}/{SESSION_ID}_{policy.name}_ONLY_WORKERS"
+    folder_name = os.path.join(
+        _NO_LEARNING_ROOT,
+        policy.name,
+        f"{SESSION_ID}_{policy.name}_ONLY_WORKERS",
+    )
     print(folder_name)
-    # Check if the folder exists
     if os.path.exists(folder_name):
-        # Get the database file path
         add_row(folder_name, policy.name)
        
 

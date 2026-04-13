@@ -23,15 +23,19 @@ from run_simulation_d_sarsa_cloud import run_simulation as run_simulation_cloud
 from run_simulations_no_learning import run_simulation as run_simulation_no_learning
 from run_simulation_d_sarsa import run_simulation as run_simulation
 from run_simulation_d_sarsa_cloud_failure import run_simulation as run_simulation_failure
-from config import MAX_PARALLEL_SIMULATIONS
+from config import (
+    MAX_PARALLEL_SIMULATIONS,
+    RESULTS_DATA_DIR,
+    RESULTS_PLOT_DIR,
+    RESULTS_TABLE_DIR,
+)
 from node import Node
 
 ALPHA_INCREMENT = 0.05
 SESSION_ID = datetime.now().strftime("%Y%m%d")
-PATH_RESULTS = "../results"
-PATH_RESULTS_DATA = f"{PATH_RESULTS}/data"
-PATH_RESULTS_TABLE = f"{PATH_RESULTS}/table"
-PATH_RESULTS_PLOT = f"{PATH_RESULTS}/plot"
+PATH_RESULTS_DATA = RESULTS_DATA_DIR
+PATH_RESULTS_TABLE = RESULTS_TABLE_DIR
+PATH_RESULTS_PLOT = RESULTS_PLOT_DIR
 os.makedirs(PATH_RESULTS_DATA, exist_ok=True)
 os.makedirs(PATH_RESULTS_PLOT, exist_ok=True)
 os.makedirs(PATH_RESULTS_TABLE, exist_ok=True)
