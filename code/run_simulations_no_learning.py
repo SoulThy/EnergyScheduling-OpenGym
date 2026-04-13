@@ -163,7 +163,12 @@ if __name__ == "__main__":
     # Calculate the number of processes to launch based on CPU cores
     num_cores = MAX_PARALLEL_SIMULATIONS
 
-    policies =  [Node.NoLearningPolicy.LEAST_LOADED_NOT_AWARE,Node.NoLearningPolicy.MAXIMUM_LIFESPANE,Node.NoLearningPolicy.RANDOM]
+    policies = [
+        Node.NoLearningPolicy.LEAST_LOADED_NOT_AWARE,
+        Node.NoLearningPolicy.MAXIMUM_LIFESPANE,
+        Node.NoLearningPolicy.RANDOM,
+        Node.NoLearningPolicy.SCORE_SIMPLE,
+    ]
     
     # Launch processes
     processes = []

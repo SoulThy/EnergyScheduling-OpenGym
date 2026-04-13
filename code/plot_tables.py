@@ -148,7 +148,12 @@ for alpha in alpha_range:
 base_folder = "_log/no-learning"
 
 # Define the range of alpha values
-policies =  [Node.NoLearningPolicy.LEAST_LOADED_AWARE_CLOUD,Node.NoLearningPolicy.MAXIMUM_LIFESPANE,Node.NoLearningPolicy.RANDOM]
+policies = [
+    Node.NoLearningPolicy.LEAST_LOADED_AWARE_CLOUD,
+    Node.NoLearningPolicy.MAXIMUM_LIFESPANE,
+    Node.NoLearningPolicy.RANDOM,
+    Node.NoLearningPolicy.SCORE_SIMPLE,
+]
 
 for policy in policies:
     # Set the folder name based on the alpha value
@@ -205,7 +210,12 @@ for alpha in alpha_range:
 base_folder = "_log/no-learning"
 
 # Define the range of alpha values
-policies =  [Node.NoLearningPolicy.LEAST_LOADED_NOT_AWARE,Node.NoLearningPolicy.MAXIMUM_LIFESPANE,Node.NoLearningPolicy.RANDOM]
+policies = [
+    Node.NoLearningPolicy.LEAST_LOADED_NOT_AWARE,
+    Node.NoLearningPolicy.MAXIMUM_LIFESPANE,
+    Node.NoLearningPolicy.RANDOM,
+    Node.NoLearningPolicy.SCORE_SIMPLE,
+]
 
 for policy in policies:
     # Set the folder name based on the alpha value
