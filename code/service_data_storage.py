@@ -21,7 +21,6 @@ from config import (
     PROBING_STATE_REFRESH_EVERY_K_JOBS,
     RESULTS_DATA_DIR,
     SCORE_SIMPLE_WEIGHT_B,
-    SCORE_SIMPLE_WEIGHT_F,
     SCORE_SIMPLE_WEIGHT_Q,
     WORKER_BATTERY_CAPACITIES,
 )
@@ -353,7 +352,6 @@ class ServiceDataStorage:
             "PROBING_STATE_REFRESH_EVERY_K_JOBS": str(PROBING_STATE_REFRESH_EVERY_K_JOBS),
             "SCORE_SIMPLE_WEIGHT_Q": str(SCORE_SIMPLE_WEIGHT_Q),
             "SCORE_SIMPLE_WEIGHT_B": str(SCORE_SIMPLE_WEIGHT_B),
-            "SCORE_SIMPLE_WEIGHT_F": str(SCORE_SIMPLE_WEIGHT_F),
             "POWER_MAX_TRANSMISSION_W": str(POWER_MAX_TRANSMISSION_W),
             "WORKER_BATTERY_CAPACITIES": ",".join(str(v) for v in WORKER_BATTERY_CAPACITIES),
             # Tag to distinguish different workload / environment models in analysis.

@@ -26,7 +26,6 @@ from config import (
     PROBING_ENERGY_COST_WH,
     PROBING_STATE_REFRESH_EVERY_K_JOBS,
     SCORE_SIMPLE_WEIGHT_B,
-    SCORE_SIMPLE_WEIGHT_F,
     SCORE_SIMPLE_WEIGHT_Q,
 )
 from function_approximation import DSPSarsaTiling
@@ -1564,11 +1563,23 @@ class Node:
             worker_actions = []
             for candidate_action in possible_actions:
                 if self._actions_space == Node.ActionsSpace.ONLY_WORKERS:
-                    if candidate_action > 0:
-                        worker_actions.append(candidate_action)
+                    if candidate_action <= 0:
+                        continue
+                    worker_idx = candidate_action - 1
                 elif self._actions_space == Node.ActionsSpace.WORKERS_OR_CLOUD:
-                    if candidate_action > 1:
-                        worker_actions.append(candidate_action)
+                    if candidate_action <= 1:
+                        continue
+                    worker_idx = candidate_action - 2
+                else:
+                    raise RuntimeError("Action space not supported for SCORE_SIMPLE")
+
+                worker = self._service_discovery.get_worker_in_cluster_by_index(
+                    self._node_belong_to_cluster,
+                    worker_idx,
+                )
+                if worker.is_died():
+                    continue
+                worker_actions.append(candidate_action)
 
             if len(worker_actions) == 0:
                 # No valid worker action: preserve legacy fallback semantics.
@@ -1593,14 +1604,8 @@ class Node:
                 qi = float(sum(self._loads_cluster[worker_idx])) / float(max(1, self._max_jobs_in_queue))
                 # Bi: battery penalty (higher when battery is low).
                 bi = 1.0 - float(worker.get_battery_residual_percentage())
-                # Fi: failure penalty.
-                fi = 1.0 if worker.is_died() else 0.0
 
-                score = (
-                    SCORE_SIMPLE_WEIGHT_Q * qi
-                    + SCORE_SIMPLE_WEIGHT_B * bi
-                    + SCORE_SIMPLE_WEIGHT_F * fi
-                )
+                score = SCORE_SIMPLE_WEIGHT_Q * qi + SCORE_SIMPLE_WEIGHT_B * bi
 
                 if score < best_score:
                     best_score = score

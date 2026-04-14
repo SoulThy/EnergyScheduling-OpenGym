@@ -159,7 +159,6 @@ def main() -> None:
         _kv("MODEL_VERSION:", _get("MODEL_VERSION"))
         _kv("SCORE_SIMPLE_WEIGHT_Q:", _get("SCORE_SIMPLE_WEIGHT_Q"))
         _kv("SCORE_SIMPLE_WEIGHT_B:", _get("SCORE_SIMPLE_WEIGHT_B"))
-        _kv("SCORE_SIMPLE_WEIGHT_F:", _get("SCORE_SIMPLE_WEIGHT_F"))
         _kv("WORKER_BATTERY_CAPACITIES:", _get("WORKER_BATTERY_CAPACITIES"))
         _kv("NODE_MACHINE_SPEEDS:", _get("NODE_MACHINE_SPEEDS"))
     else:
