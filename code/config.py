@@ -150,5 +150,6 @@ PROBING_STATE_REFRESH_EVERY_K_JOBS: Final[int] = max(
 # where:
 #   Qi = normalized queue load
 #   Bi = battery penalty (1 - residual_percentage)
-SCORE_SIMPLE_WEIGHT_Q: Final[float] = float(os.getenv("SCORE_SIMPLE_WEIGHT_Q", "0.5"))
-SCORE_SIMPLE_WEIGHT_B: Final[float] = float(os.getenv("SCORE_SIMPLE_WEIGHT_B", "0.3"))
+# Default trade-off: load (QoS proxy) vs battery; sum to 1.0.
+SCORE_SIMPLE_WEIGHT_Q: Final[float] = float(os.getenv("SCORE_SIMPLE_WEIGHT_Q", "0.6"))
+SCORE_SIMPLE_WEIGHT_B: Final[float] = float(os.getenv("SCORE_SIMPLE_WEIGHT_B", "0.4"))
