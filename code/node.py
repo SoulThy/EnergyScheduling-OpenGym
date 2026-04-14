@@ -1560,6 +1560,13 @@ class Node:
                 raise RuntimeError("Action space not supported")
 
         elif self._session_no_learning_policy == Node.NoLearningPolicy.SCORE_SIMPLE:
+            if self._actions_space == Node.ActionsSpace.WORKERS_OR_CLOUD:
+                # Align with LEAST_LOADED_AWARE_CLOUD: longest job type always to cloud when available.
+                if job.get_type() == self._job_periodic_types + self._job_exponential_types - 1:
+                    if 1 in possible_actions:
+                        return 1  # 0=reject, 1=cloud, >1 workers
+                    return 0
+
             worker_actions = []
             for candidate_action in possible_actions:
                 if self._actions_space == Node.ActionsSpace.ONLY_WORKERS:
