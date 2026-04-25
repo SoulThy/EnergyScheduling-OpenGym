@@ -4,7 +4,9 @@ import argparse
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Optional
+
+import matplotlib.pyplot as plt
 
 
 @dataclass(frozen=True)
@@ -19,39 +21,6 @@ POLICIES_ONLY_WORKERS: list[PolicySpec] = [
     PolicySpec("RANDOM", "RAND"),
     PolicySpec("SCORE_SIMPLE", "LBF"),
 ]
-
-
-def _hex_color(rgb: tuple[int, int, int]) -> str:
-    return "#{:02x}{:02x}{:02x}".format(*rgb)
-
-
-TAB10 = [
-    _hex_color((31, 119, 180)),
-    _hex_color((255, 127, 14)),
-    _hex_color((44, 160, 44)),
-    _hex_color((214, 39, 40)),
-    _hex_color((148, 103, 189)),
-    _hex_color((140, 86, 75)),
-    _hex_color((227, 119, 194)),
-    _hex_color((127, 127, 127)),
-    _hex_color((188, 189, 34)),
-    _hex_color((23, 190, 207)),
-]
-
-
-def _svg_escape(s: str) -> str:
-    return (
-        s.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-        .replace("'", "&apos;")
-    )
-
-
-def _polyline(points: Iterable[tuple[float, float]]) -> str:
-    pts = " ".join(f"{x:.2f},{y:.2f}" for x, y in points)
-    return f'<polyline fill="none" points="{pts}"/>'
 
 
 def _latest_only_workers_db(no_learning_root: Path, policy_dir: str) -> Path:
@@ -92,6 +61,16 @@ def _read_round_batteries(db_path: Path) -> dict[int, list[tuple[float, float]]]
     return out
 
 
+def _downsample(series: list[tuple[float, float]], max_points: int) -> list[tuple[float, float]]:
+    if max_points <= 0 or len(series) <= max_points:
+        return series
+    step = max(1, len(series) // max_points)
+    out = series[::step]
+    if out[-1] != series[-1]:
+        out.append(series[-1])
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
@@ -116,6 +95,24 @@ def main() -> int:
         type=str,
         default="only_workers_batteries_4subplots",
         help="Output filename stem (without extension).",
+    )
+    parser.add_argument(
+        "--max-points",
+        type=int,
+        default=3500,
+        help="Max points per line (downsampling) to keep plots light and readable.",
+    )
+    parser.add_argument(
+        "--figsize",
+        type=str,
+        default="10,6.5",
+        help="Figure size in inches as 'W,H' (e.g. '10,6.5').",
+    )
+    parser.add_argument(
+        "--dpi",
+        type=int,
+        default=200,
+        help="DPI for PNG output.",
     )
     args = parser.parse_args()
 
@@ -142,149 +139,80 @@ def main() -> int:
         raise SystemExit("No workers found in `round` table (empty traces).")
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
-    out_svg = args.out_dir / f"{args.out_stem}.svg"
+    out_pdf = args.out_dir / f"{args.out_stem}.pdf"
+    out_png = args.out_dir / f"{args.out_stem}.png"
 
-    # Consistent colors across subplots.
-    worker_to_color = {wid: TAB10[i % len(TAB10)] for i, wid in enumerate(worker_ids)}
-
-    # ---- Simple SVG layout (no external deps) ----
-    # Canvas size tuned to look decent in thesis and be easily converted to PDF.
-    width = 1100
-    height = 800
-
-    margin_outer = 60
-    legend_h = 70
-
-    grid_w = width - 2 * margin_outer
-    grid_h = height - 2 * margin_outer - legend_h
-
-    cols = 2
-    rows = 2
-    cell_w = grid_w / cols
-    cell_h = grid_h / rows
-
-    pad_l = 55
-    pad_r = 15
-    pad_t = 28
-    pad_b = 40
-
-    t_max = max(global_t_max, 1e-9)
-    b_max = max(global_b_max * 1.02, 1e-9)
-
-    def x_map(t: float, x0: float, w: float) -> float:
-        return x0 + (t / t_max) * w
-
-    def y_map(b: float, y0: float, h: float) -> float:
-        # SVG y grows downward.
-        return y0 + h - (b / b_max) * h
-
-    def add(s: str) -> None:
-        svg_parts.append(s)
-
-    svg_parts: list[str] = []
-    add('<?xml version="1.0" encoding="UTF-8"?>')
-    add(
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
-        f'viewBox="0 0 {width} {height}">'
-    )
-    add(
-        "<style>"
-        ".axis{stroke:#000;stroke-width:1}"
-        ".grid{stroke:#cacaca;stroke-width:0.8;stroke-dasharray:4 4;opacity:0.8}"
-        ".line{stroke-width:1.2}"
-        ".title{font-family:serif;font-size:16px;font-weight:600}"
-        ".label{font-family:serif;font-size:14px}"
-        ".tick{font-family:serif;font-size:12px;fill:#111}"
-        "</style>"
+    # Matplotlib styling tuned for thesis readability.
+    plt.rcParams.update(
+        {
+            "font.size": 12,
+            "axes.titlesize": 14,
+            "axes.labelsize": 12,
+            "legend.fontsize": 11,
+            "xtick.labelsize": 11,
+            "ytick.labelsize": 11,
+            "lines.linewidth": 1.2,
+        }
     )
 
-    # Global labels
-    add(
-        f'<text x="{width/2:.1f}" y="{height - margin_outer/2:.1f}" text-anchor="middle" class="label">'
-        f"{_svg_escape('Time (s)')}</text>"
-    )
-    add(
-        f'<text x="{margin_outer/2:.1f}" y="{height/2:.1f}" text-anchor="middle" class="label" '
-        f'transform="rotate(-90 {margin_outer/2:.1f},{height/2:.1f})">'
-        f"{_svg_escape('Battery residual (Wh)')}</text>"
-    )
+    try:
+        fig_w_s, fig_h_s = args.figsize.split(",", 1)
+        fig_w = float(fig_w_s.strip())
+        fig_h = float(fig_h_s.strip())
+    except Exception as e:
+        raise SystemExit(f"Invalid --figsize '{args.figsize}', expected 'W,H'") from e
 
-    # Ticks (keep minimal and consistent)
-    x_ticks = 5
-    y_ticks = 5
+    fig, axes = plt.subplots(nrows=2, ncols=2, sharex=True, sharey=True, figsize=(fig_w, fig_h))
+    axes_list = [axes[0][0], axes[0][1], axes[1][0], axes[1][1]]
 
-    for idx, (spec, traces) in enumerate(traces_by_policy):
-        r = idx // cols
-        c = idx % cols
+    colors = plt.get_cmap("tab10")
+    worker_to_color = {wid: colors(i % 10) for i, wid in enumerate(worker_ids)}
 
-        cell_x0 = margin_outer + c * cell_w
-        cell_y0 = margin_outer + r * cell_h
+    xlim = (0.0, global_t_max if global_t_max > 0 else 1.0)
+    ylim = (0.0, global_b_max * 1.02 if global_b_max > 0 else 1.0)
 
-        plot_x0 = cell_x0 + pad_l
-        plot_y0 = cell_y0 + pad_t
-        plot_w = cell_w - pad_l - pad_r
-        plot_h = cell_h - pad_t - pad_b
+    legend_handles: list[Optional[plt.Line2D]] = [None for _ in worker_ids]
 
-        # Title
-        add(
-            f'<text x="{cell_x0 + cell_w/2:.1f}" y="{cell_y0 + 18:.1f}" text-anchor="middle" class="title">'
-            f"{_svg_escape(spec.pretty)}</text>"
-        )
-
-        # Grid + ticks
-        for i in range(x_ticks + 1):
-            tx = plot_x0 + (i / x_ticks) * plot_w
-            add(f'<line x1="{tx:.2f}" y1="{plot_y0:.2f}" x2="{tx:.2f}" y2="{plot_y0 + plot_h:.2f}" class="grid"/>')
-            t_val = (i / x_ticks) * t_max
-            add(
-                f'<text x="{tx:.2f}" y="{plot_y0 + plot_h + 18:.2f}" text-anchor="middle" class="tick">'
-                f"{int(round(t_val))}</text>"
-            )
-        for i in range(y_ticks + 1):
-            ty = plot_y0 + plot_h - (i / y_ticks) * plot_h
-            add(f'<line x1="{plot_x0:.2f}" y1="{ty:.2f}" x2="{plot_x0 + plot_w:.2f}" y2="{ty:.2f}" class="grid"/>')
-            b_val = (i / y_ticks) * b_max
-            add(
-                f'<text x="{plot_x0 - 8:.2f}" y="{ty + 4:.2f}" text-anchor="end" class="tick">'
-                f"{b_val:.1f}</text>"
-            )
-
-        # Axes
-        add(f'<line x1="{plot_x0:.2f}" y1="{plot_y0:.2f}" x2="{plot_x0:.2f}" y2="{plot_y0 + plot_h:.2f}" class="axis"/>')
-        add(f'<line x1="{plot_x0:.2f}" y1="{plot_y0 + plot_h:.2f}" x2="{plot_x0 + plot_w:.2f}" y2="{plot_y0 + plot_h:.2f}" class="axis"/>')
-
-        # Lines
-        for wid in worker_ids:
+    for ax, (spec, traces) in zip(axes_list, traces_by_policy):
+        for idx_w, wid in enumerate(worker_ids):
             series = traces.get(wid)
             if not series:
                 continue
-            pts = [(x_map(t, plot_x0, plot_w), y_map(b, plot_y0, plot_h)) for t, b in series]
-            add(
-                _polyline(pts).replace(
-                    "/>",
-                    f' class="line" stroke="{worker_to_color[wid]}"/>',
-                )
-            )
+            series = _downsample(series, args.max_points)
+            xs = [p[0] for p in series]
+            ys = [p[1] for p in series]
+            (line,) = ax.plot(xs, ys, color=worker_to_color[wid])
+            if legend_handles[idx_w] is None:
+                legend_handles[idx_w] = line
 
-    # Legend
-    leg_y0 = height - margin_outer - legend_h + 25
-    leg_x0 = margin_outer + 10
-    step = min(240, (width - 2 * margin_outer) / max(1, len(worker_ids)))
-    for i, wid in enumerate(worker_ids):
-        x = leg_x0 + i * step
-        add(
-            f'<line x1="{x:.1f}" y1="{leg_y0:.1f}" x2="{x + 28:.1f}" y2="{leg_y0:.1f}" '
-            f'stroke="{worker_to_color[wid]}" stroke-width="3"/>'
-        )
-        add(
-            f'<text x="{x + 36:.1f}" y="{leg_y0 + 4:.1f}" text-anchor="start" class="tick">'
-            f"{_svg_escape(f'Worker {wid}')}</text>"
-        )
+        ax.set_title(spec.pretty, fontweight="semibold")
+        ax.grid(color="#cacaca", linestyle="--", linewidth=0.6, alpha=0.8)
+        ax.set_xlim(xlim)
+        ax.set_ylim(ylim)
 
-    add("</svg>")
-    out_svg.write_text("\n".join(svg_parts), encoding="utf-8")
+    # Keep global x-label above the figure-level legend.
+    fig.supxlabel("Time (s)", y=0.08)
+    fig.supylabel("Battery residual (Wh)")
 
-    print(f"[OK] Wrote {out_svg}")
+    handles = [h for h in legend_handles if h is not None]
+    labels = [f"Worker {wid}" for wid, h in zip(worker_ids, legend_handles) if h is not None]
+    fig.legend(
+        handles,
+        labels,
+        loc="lower center",
+        ncol=min(4, len(handles)),
+        frameon=False,
+        bbox_to_anchor=(0.5, 0.02),
+    )
+
+    # Reserve bottom space for supxlabel + legend (avoid overlap).
+    fig.tight_layout(rect=(0.0, 0.14, 1.0, 1.0))
+    fig.savefig(out_pdf, bbox_inches="tight")
+    fig.savefig(out_png, dpi=args.dpi, bbox_inches="tight")
+    plt.close(fig)
+
+    print(f"[OK] Wrote {out_pdf}")
+    print(f"[OK] Wrote {out_png}")
     for spec, db_path in policy_to_db:
         print(f"[DB] {spec.pretty}: {db_path}")
 
