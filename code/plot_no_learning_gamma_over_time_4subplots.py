@@ -51,7 +51,10 @@ def _latest_db_for(
     for p in policy_root.iterdir():
         if not p.is_dir():
             continue
-        if not p.name.endswith(scenario_suffix):
+        # Accept both:
+        # - ..._<SCENARIO>
+        # - ..._<SCENARIO>_FAILURE (failure runs)
+        if not (p.name.endswith(scenario_suffix) or p.name.endswith(f"{scenario_suffix}_FAILURE")):
             continue
         if name_contains and name_contains not in p.name:
             continue

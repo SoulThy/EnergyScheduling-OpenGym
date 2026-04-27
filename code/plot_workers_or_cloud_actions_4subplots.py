@@ -23,17 +23,30 @@ POLICIES_WORKERS_OR_CLOUD: list[PolicySpec] = [
 ]
 
 
-def _latest_workers_or_cloud_db(no_learning_root: Path, policy_dir: str) -> Path:
+def _latest_workers_or_cloud_db(
+    no_learning_root: Path,
+    policy_dir: str,
+    name_contains: str | None,
+) -> Path:
     policy_root = no_learning_root / policy_dir
     if not policy_root.exists():
         raise FileNotFoundError(f"Policy directory not found: {policy_root}")
 
-    # Expected: <DATE>_<POLICY>_WORKERS_OR_CLOUD/log.db
+    # Expected:
+    # - <DATE>_<POLICY>_WORKERS_OR_CLOUD/log.db
+    # - <DATE>_<POLICY>_WORKERS_OR_CLOUD_FAILURE/log.db
     runs = sorted(
-        [p for p in policy_root.iterdir() if p.is_dir() and p.name.endswith("_WORKERS_OR_CLOUD")]
+        [
+            p
+            for p in policy_root.iterdir()
+            if p.is_dir()
+            and (p.name.endswith("_WORKERS_OR_CLOUD") or p.name.endswith("_WORKERS_OR_CLOUD_FAILURE"))
+            and (name_contains is None or name_contains in p.name)
+        ]
     )
     if not runs:
-        raise FileNotFoundError(f"No *_WORKERS_OR_CLOUD runs found under {policy_root}")
+        extra = f" containing '{name_contains}'" if name_contains else ""
+        raise FileNotFoundError(f"No WORKERS_OR_CLOUD runs found under {policy_root}{extra}")
 
     db_path = runs[-1] / "log.db"
     if not db_path.exists():
@@ -195,6 +208,15 @@ def main() -> int:
         help="Window size in seconds for averaging action percentages.",
     )
     parser.add_argument(
+        "--name-contains",
+        type=str,
+        default="FAILURE",
+        help=(
+            "Optional substring that must appear in the run directory name. "
+            "Use 'FAILURE' for failure runs; pass '' to disable filtering."
+        ),
+    )
+    parser.add_argument(
         "--scheduler-uid",
         type=int,
         default=0,
@@ -213,10 +235,13 @@ def main() -> int:
         help="DPI for PNG output.",
     )
     args = parser.parse_args()
+    name_contains = args.name_contains if args.name_contains.strip() else None
 
     policy_to_db: list[tuple[PolicySpec, Path]] = []
     for spec in POLICIES_WORKERS_OR_CLOUD:
-        policy_to_db.append((spec, _latest_workers_or_cloud_db(args.no_learning_root, spec.policy_dir)))
+        policy_to_db.append(
+            (spec, _latest_workers_or_cloud_db(args.no_learning_root, spec.policy_dir, name_contains))
+        )
 
     # Gather windowed series per policy.
     series_by_policy: list[tuple[PolicySpec, list[int], list[float], list[float], list[float]]] = []
