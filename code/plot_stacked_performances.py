@@ -5,6 +5,7 @@
 import math
 import os
 import sqlite3
+import argparse
 from typing import List
 
 from matplotlib import pyplot as plt
@@ -236,11 +237,37 @@ def plot_stacked(session_id, alpha, type, path_results_plot, path_results_data):
     plt.savefig(figure_filename, bbox_inches='tight', transparent="True", pad_inches=0)
 
 if __name__ == "__main__":
-    alpha = "0.00"
-    type = "_FAILURE"
-    SESSION_ID = datetime.now().strftime("%Y%m%d")
-    PATH_RESULTS = "../results"
-    PATH_RESULTS_PLOT = f"{PATH_RESULTS}/plot"
-    PATH_RESULTS_DATA = f"../results/data"
+    parser = argparse.ArgumentParser(
+        description="Plot stacked reward/FPS/batteries/variance from a DSARSA WORKERS_OR_CLOUD run."
+    )
+    parser.add_argument(
+        "--session-id",
+        type=str,
+        default=datetime.now().strftime("%Y%m%d"),
+        help="Run session date prefix (e.g. 20260501).",
+    )
+    parser.add_argument(
+        "--alpha",
+        type=str,
+        default="0.60",
+        help="Alpha string used in the run folder name (e.g. 0.50, 0.60).",
+    )
+    parser.add_argument(
+        "--type",
+        type=str,
+        default="",
+        help="Optional suffix used in the run folder name (e.g. _FAILURE).",
+    )
+    parser.add_argument(
+        "--results-dir",
+        type=str,
+        default="../results",
+        help="Results root directory (default matches docker --workdir /code).",
+    )
+    args = parser.parse_args()
 
-    plot_stacked(SESSION_ID, alpha, type, PATH_RESULTS_PLOT, PATH_RESULTS_DATA)
+    path_results = args.results_dir
+    path_results_plot = f"{path_results}/plot"
+    path_results_data = f"{path_results}/data"
+
+    plot_stacked(args.session_id, args.alpha, args.type, path_results_plot, path_results_data)

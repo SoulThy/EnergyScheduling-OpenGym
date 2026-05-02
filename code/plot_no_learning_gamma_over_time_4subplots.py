@@ -35,6 +35,8 @@ def _latest_db_for(
     policy_dir: str,
     scenario_suffix: str,
     name_contains: str | None,
+    run_name_contains: str | None,
+    failure_mode: str,
 ) -> Path:
     """
     Discover the latest run directory under:
@@ -51,12 +53,28 @@ def _latest_db_for(
     for p in policy_root.iterdir():
         if not p.is_dir():
             continue
-        # Accept both:
-        # - ..._<SCENARIO>
-        # - ..._<SCENARIO>_FAILURE (failure runs)
-        if not (p.name.endswith(scenario_suffix) or p.name.endswith(f"{scenario_suffix}_FAILURE")):
-            continue
+        # Runs may include extra tags after the scenario suffix (e.g. "..._FAILURE_110_100_070").
+        # So we match by containment instead of strict suffix.
+        has_scenario = scenario_suffix in p.name
+        has_failure = "_FAILURE" in p.name
+        is_failure = has_scenario and has_failure
+        is_non_failure = has_scenario and not has_failure
+
+        if failure_mode == "only":
+            if not is_failure:
+                continue
+        elif failure_mode == "non":
+            if not is_non_failure:
+                continue
+        elif failure_mode == "any":
+            if not (is_non_failure or is_failure):
+                continue
+        else:
+            raise RuntimeError(f"Invalid failure_mode='{failure_mode}', expected: any|only|non")
+
         if name_contains and name_contains not in p.name:
+            continue
+        if run_name_contains and run_name_contains not in p.name:
             continue
         runs.append(p)
 
@@ -193,6 +211,26 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--failure-mode",
+        type=str,
+        choices=["any", "only", "non"],
+        default="any",
+        help=(
+            "Choose which run type to pick when both are present: "
+            "'non' for *_<SCENARIO>, 'only' for *_<SCENARIO>_FAILURE, 'any' for either."
+        ),
+    )
+    parser.add_argument(
+        "--run-name-contains",
+        type=str,
+        default="",
+        help=(
+            "Extra substring to select a specific run among multiple dates/tags. "
+            "Example: '--run-name-contains 20260429' or '--run-name-contains PAIR_'. "
+            "Empty string disables this filter."
+        ),
+    )
+    parser.add_argument(
         "--window-s",
         type=int,
         default=300,
@@ -250,6 +288,7 @@ def main() -> int:
 
     scenario_suffix = f"_{args.scenario}"
     name_contains = args.name_contains if args.name_contains.strip() else None
+    run_name_contains = args.run_name_contains if args.run_name_contains.strip() else None
 
     policies = POLICIES_ONLY_WORKERS if args.scenario == "ONLY_WORKERS" else POLICIES_WORKERS_OR_CLOUD
 
@@ -263,6 +302,8 @@ def main() -> int:
                     policy_dir=spec.policy_dir,
                     scenario_suffix=scenario_suffix,
                     name_contains=name_contains,
+                    run_name_contains=run_name_contains,
+                    failure_mode=args.failure_mode,
                 ),
             )
         )

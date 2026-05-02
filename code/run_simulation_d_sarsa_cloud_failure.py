@@ -74,12 +74,29 @@ def run_simulation(alpha):
     # create nodes
     cloud = Cloud(env, latency_roundtrip_ms=20)
     
-    #1.8 1.7 1.4
+    # WORKERS_OR_CLOUD thesis scenario (LEGACY): worker speeds 1.0, 0.9, 0.6 and batteries 7, 8, 9 Wh.
+    # Keep scheduler at 1.0 (unused for execution).
+    worker_specs = [
+        (1, 1.0, 7),
+        (2, 0.9, 8),
+        (3, 0.6, 9),
+    ]
 
-    nodes.append(create_node(env, 0, 0, Node.NodeType.SCHEDULER, 1.0, 10, alpha, None,False))
-    nodes.append(create_node(env, 1, 0, Node.NodeType.WORKER, 1.1, 9, alpha, solar_panel_spec_by_node_id.get(1),SOLAR_PANEL_ENABLED))
-    nodes.append(create_node(env, 2, 0, Node.NodeType.WORKER, 1.0, 8, alpha , solar_panel_spec_by_node_id.get(2),SOLAR_PANEL_ENABLED))
-    nodes.append(create_node(env, 3, 0, Node.NodeType.WORKER, 0.7, 7, alpha, solar_panel_spec_by_node_id.get(3),SOLAR_PANEL_ENABLED))
+    nodes.append(create_node(env, 0, 0, Node.NodeType.SCHEDULER, 1.0, 10, alpha, None, False))
+    for wid, speed, batt in worker_specs:
+        nodes.append(
+            create_node(
+                env,
+                wid,
+                0,
+                Node.NodeType.WORKER,
+                speed,
+                batt,
+                alpha,
+                solar_panel_spec_by_node_id.get(wid),
+                SOLAR_PANEL_ENABLED,
+            )
+        )
 
     
     # add them discovery service
