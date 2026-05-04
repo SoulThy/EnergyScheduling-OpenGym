@@ -26,7 +26,7 @@ POLICIES_WORKERS_OR_CLOUD: list[PolicySpec] = [
     PolicySpec("LEAST_LOADED_AWARE_CLOUD", "LLAC"),
     PolicySpec("MAXIMUM_LIFESPANE", "ML"),
     PolicySpec("RANDOM", "RAND"),
-    PolicySpec("SCORE_SIMPLE", "LBF"),
+    PolicySpec("LBFC", "LBFC"),
 ]
 
 

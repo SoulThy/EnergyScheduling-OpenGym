@@ -30,6 +30,7 @@ from config import (
 )
 from function_approximation import DSPSarsaTiling
 from job import Job
+import lbfc
 from log import Log
 from traffic_model import TrafficModel
 from solar_power_panel_model import SolarPowerPanelModel
@@ -110,6 +111,7 @@ class Node:
         MAXIMUM_LIFESPANE = 6
         GYMNASIUM = 7
         SCORE_SIMPLE = 8
+        LBFC = 9
 
     class DistributionArrivals(Enum):
         POISSON = 0
@@ -417,6 +419,9 @@ class Node:
         self._loads_cluster = []  # this is [ [#jobstype1, #jobstype2], [..., ...] ]
         """The load of every worker node given the job that we assigned to them"""
         self._loads_our_history = [0]
+
+        # LBFC: exponential moving average of cluster mean normalized load (scheduler only).
+        self._ema_q = 0.0
 
         # counters and lists
         self._total_jobs = 0
@@ -1614,6 +1619,72 @@ class Node:
 
                 score = SCORE_SIMPLE_WEIGHT_Q * qi + SCORE_SIMPLE_WEIGHT_B * bi
 
+                if score < best_score:
+                    best_score = score
+                    best_actions = [candidate_action]
+                elif score == best_score:
+                    best_actions.append(candidate_action)
+
+            if len(best_actions) == 1:
+                action = best_actions[0]
+            else:
+                action = best_actions[random.randint(0, len(best_actions) - 1)]
+
+        elif self._session_no_learning_policy == Node.NoLearningPolicy.LBFC:
+            if self._actions_space != Node.ActionsSpace.WORKERS_OR_CLOUD:
+                raise RuntimeError("LBFC policy requires WORKERS_OR_CLOUD action space")
+
+            worker_nodes = self._service_discovery.get_workers_in_cluster(self._node_belong_to_cluster)
+            q_inst = lbfc.mean_normalized_load_active_workers(
+                self._loads_cluster,
+                worker_nodes,
+                self._max_jobs_in_queue,
+            )
+            if self._ema_q == 0.0:
+                self._ema_q = q_inst
+            else:
+                self._ema_q = (lbfc.LBFC_EMA_ALPHA * q_inst) + (
+                    (1.0 - lbfc.LBFC_EMA_ALPHA) * self._ema_q
+                )
+            u = lbfc.stress_u(self._ema_q)
+            expected_weights = tuple(self._job_periodic_durations) + tuple(
+                self._job_exponential_durations
+            )
+            probs = lbfc.offload_fractions_lbfc(u, expected_weights)
+            lbfc.LBFC.maybe_log_debug(float(self._env.now), q_inst, self._ema_q, u, probs)
+
+            if lbfc.prefer_cloud(job.get_uid(), job.get_type(), probs) and 1 in possible_actions:
+                return 1
+
+            worker_actions = []
+            for candidate_action in possible_actions:
+                if candidate_action <= 1:
+                    continue
+                worker_idx = candidate_action - 2
+                worker = self._service_discovery.get_worker_in_cluster_by_index(
+                    self._node_belong_to_cluster,
+                    worker_idx,
+                )
+                if worker.is_died():
+                    continue
+                worker_actions.append(candidate_action)
+
+            if len(worker_actions) == 0:
+                if 1 in possible_actions:
+                    return 1
+                return 0
+
+            best_score = float("inf")
+            best_actions = []
+            for candidate_action in worker_actions:
+                worker_idx = candidate_action - 2
+                worker = self._service_discovery.get_worker_in_cluster_by_index(
+                    self._node_belong_to_cluster,
+                    worker_idx,
+                )
+                qi = float(sum(self._loads_cluster[worker_idx])) / float(max(1, self._max_jobs_in_queue))
+                bi = 1.0 - float(worker.get_battery_residual_percentage())
+                score = SCORE_SIMPLE_WEIGHT_Q * qi + SCORE_SIMPLE_WEIGHT_B * bi
                 if score < best_score:
                     best_score = score
                     best_actions = [candidate_action]

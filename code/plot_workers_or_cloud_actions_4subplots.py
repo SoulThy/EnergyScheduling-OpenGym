@@ -176,12 +176,102 @@ def _windowed_percentages(
     return x, y_rej, y_cloud, y_worker
 
 
+def _plot_single_db_actions(
+    db_path: Path,
+    *,
+    out_dir: Path,
+    out_stem: str,
+    window_s: int,
+    scheduler_uid: int,
+    figsize: str,
+    dpi: int,
+    t_fail: float | None,
+    t_recover: float | None,
+) -> int:
+    """One figure: Worker / Cloud / Reject share (%) vs time."""
+    if not db_path.is_file():
+        raise SystemExit(f"Not a file: {db_path}")
+    sim_t = _simulation_time_s(db_path, scheduler_uid=scheduler_uid)
+    total, rej, cloud = _counts_per_second(db_path, scheduler_uid=scheduler_uid)
+    x, y_rej, y_cloud, y_worker = _windowed_percentages(
+        total=total,
+        rej=rej,
+        cloud=cloud,
+        simulation_time_s=sim_t,
+        window_s=window_s,
+    )
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_pdf = out_dir / f"{out_stem}.pdf"
+    out_png = out_dir / f"{out_stem}.png"
+
+    plt.rcParams.update(
+        {
+            "font.size": 12,
+            "axes.titlesize": 14,
+            "axes.labelsize": 12,
+            "legend.fontsize": 11,
+            "xtick.labelsize": 11,
+            "ytick.labelsize": 11,
+            "lines.linewidth": 1.4,
+        }
+    )
+    try:
+        fig_w_s, fig_h_s = figsize.split(",", 1)
+        fig_w = float(fig_w_s.strip())
+        fig_h = float(fig_h_s.strip())
+    except Exception as e:
+        raise SystemExit(f"Invalid --figsize '{figsize}', expected 'W,H'") from e
+
+    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(fig_w, fig_h))
+    col_worker = "#1f77b4"
+    col_cloud = "#9467bd"
+    col_rej = "#d62728"
+    fail_line = "#d62728"
+    rec_line = "#2ca02c"
+
+    ax.plot(x, y_worker, color=col_worker, marker="o", markersize=3.0, label="Edge")
+    ax.plot(x, y_cloud, color=col_cloud, marker="s", markersize=3.0, label="Cloud")
+    ax.plot(x, y_rej, color=col_rej, marker="^", markersize=3.0, label="Reject")
+    ax.grid(color="#cacaca", linestyle="--", linewidth=0.6, alpha=0.8)
+    ax.set_ylim(0.0, 100.0)
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Action share (%)")
+    x_hi_raw = max(float(sim_t), float(max(x) if x else sim_t))
+    x_hi = max(1000.0, math.ceil(x_hi_raw / 1000.0) * 1000.0)
+    ax.set_xlim(0.0, x_hi)
+    ax.margins(x=0)
+    if t_fail is not None:
+        ax.axvline(float(t_fail), color=fail_line, linestyle="--", linewidth=1.2, zorder=0)
+    if t_recover is not None:
+        ax.axvline(float(t_recover), color=rec_line, linestyle="--", linewidth=1.2, zorder=0)
+    ax.legend(
+        loc="upper right",
+        frameon=False,
+        fontsize=11,
+    )
+    fig.tight_layout(pad=1.0)
+    fig.savefig(out_pdf, bbox_inches="tight", pad_inches=0.15)
+    fig.savefig(out_png, dpi=dpi, bbox_inches="tight", pad_inches=0.15)
+    plt.close(fig)
+    print(f"[OK] Wrote {out_pdf}")
+    print(f"[OK] Wrote {out_png}")
+    print(f"[DB] {db_path}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
             "Plot WORKERS_OR_CLOUD action percentages over time as 4 subplots "
-            "(one per policy) from results/data/_log/no-learning/**/log.db"
+            "(one per policy) from results/data/_log/no-learning/**/log.db. "
+            "Use --db-path for a single log.db."
         )
+    )
+    parser.add_argument(
+        "--db-path",
+        type=Path,
+        default=None,
+        help="If set, plot this log.db only (one figure; ignores policy discovery).",
     )
     parser.add_argument(
         "--no-learning-root",
@@ -198,8 +288,8 @@ def main() -> int:
     parser.add_argument(
         "--out-stem",
         type=str,
-        default="workers_or_cloud_actions_4subplots",
-        help="Output filename stem (without extension).",
+        default="",
+        help="Output filename stem (without extension). Default: actions_<run> if --db-path, else workers_or_cloud_actions_4subplots.",
     )
     parser.add_argument(
         "--window-s",
@@ -225,8 +315,8 @@ def main() -> int:
     parser.add_argument(
         "--figsize",
         type=str,
-        default="10,6.5",
-        help="Figure size in inches as 'W,H' (e.g. '10,6.5').",
+        default="",
+        help="Figure size 'W,H' inches. Default: 10,6.5 (4 panels) or 14,3.85 (single --db-path).",
     )
     parser.add_argument(
         "--dpi",
@@ -234,8 +324,37 @@ def main() -> int:
         default=200,
         help="DPI for PNG output.",
     )
+    parser.add_argument(
+        "--t-fail",
+        type=float,
+        default=None,
+        help="Optional vertical marker at this time (s).",
+    )
+    parser.add_argument(
+        "--t-recover",
+        type=float,
+        default=None,
+        help="Optional vertical marker at this time (s).",
+    )
     args = parser.parse_args()
     name_contains = args.name_contains if args.name_contains.strip() else None
+    figsize_resolved = (args.figsize or "").strip() or (
+        "14,3.85" if args.db_path else "10,6.5"
+    )
+
+    if args.db_path is not None:
+        stem = args.out_stem.strip() or f"actions_{args.db_path.parent.name}"
+        return _plot_single_db_actions(
+            args.db_path.resolve(),
+            out_dir=args.out_dir,
+            out_stem=stem,
+            window_s=args.window_s,
+            scheduler_uid=args.scheduler_uid,
+            figsize=figsize_resolved,
+            dpi=args.dpi,
+            t_fail=args.t_fail,
+            t_recover=args.t_recover,
+        )
 
     policy_to_db: list[tuple[PolicySpec, Path]] = []
     for spec in POLICIES_WORKERS_OR_CLOUD:
@@ -261,9 +380,10 @@ def main() -> int:
         if x:
             global_t_max = max(global_t_max, max(x))
 
+    out_stem = args.out_stem.strip() or "workers_or_cloud_actions_4subplots"
     args.out_dir.mkdir(parents=True, exist_ok=True)
-    out_pdf = args.out_dir / f"{args.out_stem}.pdf"
-    out_png = args.out_dir / f"{args.out_stem}.png"
+    out_pdf = args.out_dir / f"{out_stem}.pdf"
+    out_png = args.out_dir / f"{out_stem}.png"
 
     plt.rcParams.update(
         {
@@ -278,11 +398,11 @@ def main() -> int:
     )
 
     try:
-        fig_w_s, fig_h_s = args.figsize.split(",", 1)
+        fig_w_s, fig_h_s = figsize_resolved.split(",", 1)
         fig_w = float(fig_w_s.strip())
         fig_h = float(fig_h_s.strip())
     except Exception as e:
-        raise SystemExit(f"Invalid --figsize '{args.figsize}', expected 'W,H'") from e
+        raise SystemExit(f"Invalid --figsize '{figsize_resolved}', expected 'W,H'") from e
 
     fig, axes = plt.subplots(nrows=2, ncols=2, sharex=True, sharey=True, figsize=(fig_w, fig_h))
     axes_list = [axes[0][0], axes[0][1], axes[1][0], axes[1][1]]
@@ -304,6 +424,10 @@ def main() -> int:
         ax.set_title(spec.pretty, fontweight="semibold")
         ax.grid(color="#cacaca", linestyle="--", linewidth=0.6, alpha=0.8)
         ax.set_ylim(0.0, 100.0)
+        if args.t_fail is not None:
+            ax.axvline(float(args.t_fail), color="#d62728", linestyle="--", linewidth=1.2)
+        if args.t_recover is not None:
+            ax.axvline(float(args.t_recover), color="#2ca02c", linestyle="--", linewidth=1.2)
 
     fig.supxlabel("Time (s)", y=0.08)
     fig.supylabel("Action share (%)")

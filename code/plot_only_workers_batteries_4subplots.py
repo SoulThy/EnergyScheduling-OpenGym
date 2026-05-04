@@ -116,12 +116,104 @@ def _downsample(series: list[tuple[float, float]], max_points: int) -> list[tupl
     return out
 
 
+def _plot_single_db_batteries(
+    db_path: Path,
+    *,
+    out_dir: Path,
+    out_stem: str,
+    max_points: int,
+    figsize: str,
+    dpi: int,
+    t_fail: float | None,
+    t_recover: float | None,
+) -> int:
+    """One figure, all workers in `db_path` (table `round`)."""
+    if not db_path.is_file():
+        raise SystemExit(f"Not a file: {db_path}")
+    traces = _read_round_batteries(db_path)
+    worker_ids = sorted(traces.keys())
+    if not worker_ids:
+        raise SystemExit("No workers found in `round` table (empty traces).")
+
+    global_t_max = 0.0
+    global_b_max = 0.0
+    for wid, series in traces.items():
+        for t, b in series:
+            global_t_max = max(global_t_max, t)
+            global_b_max = max(global_b_max, b)
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_pdf = out_dir / f"{out_stem}.pdf"
+    out_png = out_dir / f"{out_stem}.png"
+
+    plt.rcParams.update(
+        {
+            "font.size": 12,
+            "axes.titlesize": 14,
+            "axes.labelsize": 12,
+            "legend.fontsize": 11,
+            "xtick.labelsize": 11,
+            "ytick.labelsize": 11,
+            "lines.linewidth": 1.2,
+        }
+    )
+    try:
+        fig_w_s, fig_h_s = figsize.split(",", 1)
+        fig_w = float(fig_w_s.strip())
+        fig_h = float(fig_h_s.strip())
+    except Exception as e:
+        raise SystemExit(f"Invalid --figsize '{figsize}', expected 'W,H'") from e
+
+    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(fig_w, fig_h))
+    colors = plt.get_cmap("tab10")
+    fail_color = "#d62728"
+    rec_color = "#2ca02c"
+    xlim = (0.0, global_t_max if global_t_max > 0 else 1.0)
+    ylim = (0.0, global_b_max * 1.02 if global_b_max > 0 else 1.0)
+
+    for i, wid in enumerate(worker_ids):
+        series = traces.get(wid)
+        if not series:
+            continue
+        series = _downsample(series, max_points)
+        xs = [p[0] for p in series]
+        ys = [p[1] for p in series]
+        ax.plot(xs, ys, color=colors(i % 10), label=f"Worker {wid}")
+
+    ax.set_title(f"Batteries — {db_path.parent.name}", fontweight="semibold")
+    ax.grid(color="#cacaca", linestyle="--", linewidth=0.6, alpha=0.8)
+    ax.set_xlim(xlim)
+    ax.set_ylim(ylim)
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Battery residual (Wh)")
+    if t_fail is not None:
+        ax.axvline(float(t_fail), color=fail_color, linestyle="--", linewidth=1.2, label="Failure")
+    if t_recover is not None:
+        ax.axvline(float(t_recover), color=rec_color, linestyle="--", linewidth=1.2, label="Recovery")
+    ax.legend(loc="best", frameon=True)
+    fig.tight_layout()
+    fig.savefig(out_pdf, bbox_inches="tight")
+    fig.savefig(out_png, dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[OK] Wrote {out_pdf}")
+    print(f"[OK] Wrote {out_png}")
+    print(f"[DB] {db_path}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
             "Plot battery residuals from `round` as 4 subplots (one per policy). "
-            "Supports ONLY_WORKERS and WORKERS_OR_CLOUD (including *_FAILURE runs)."
+            "Supports ONLY_WORKERS and WORKERS_OR_CLOUD (including *_FAILURE runs). "
+            "Use --db-path to plot a single log.db."
         )
+    )
+    parser.add_argument(
+        "--db-path",
+        type=Path,
+        default=None,
+        help="If set, plot this log.db only (ignores policy discovery and --scenario).",
     )
     parser.add_argument(
         "--no-learning-root",
@@ -204,6 +296,19 @@ def main() -> int:
         help="DPI for PNG output.",
     )
     args = parser.parse_args()
+
+    if args.db_path is not None:
+        stem = args.out_stem.strip() or f"batteries_{args.db_path.parent.name}"
+        return _plot_single_db_batteries(
+            args.db_path.resolve(),
+            out_dir=args.out_dir,
+            out_stem=stem,
+            max_points=args.max_points,
+            figsize=args.figsize,
+            dpi=args.dpi,
+            t_fail=args.t_fail,
+            t_recover=args.t_recover,
+        )
 
     scenario_suffix = f"_{args.scenario}"
     name_contains = args.name_contains if args.name_contains.strip() else None

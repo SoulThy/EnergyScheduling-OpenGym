@@ -7,6 +7,7 @@ import simpy
 
 from cloud import Cloud
 from config import MAX_PARALLEL_SIMULATIONS
+import lbfc
 from log import Log
 from node import Node
 from service_data_storage import ServiceDataStorage
@@ -60,6 +61,7 @@ def run_simulation(policy: Node.NoLearningPolicy) -> None:
     for node in nodes:
         node.set_service_discovery(discovery)
         node.set_service_data_storage(data_storage)
+    lbfc.LBFC.reset_debug_counter()
     for node in nodes:
         node.init()
     cloud.set_service_discovery(discovery)
@@ -68,6 +70,12 @@ def run_simulation(policy: Node.NoLearningPolicy) -> None:
         MODULE,
         f"Started simulation for {policy.name} (crash worker={crash_worker_id} at t={CRASH_START_S}s..{CRASH_END_S}s)",
     )
+    if policy == Node.NoLearningPolicy.LBFC:
+        Log.minfo(
+            MODULE,
+            f"LBFC active: EMA on mean cluster load (LBFC_EMA_ALPHA={lbfc.LBFC_EMA_ALPHA}), "
+            f"stress_u uses lbfc.TAU={lbfc.TAU}, weighted water-filling (see code/lbfc.py).",
+        )
     env.run(until=SIMULATION_TOTAL_TIME)
     Log.minfo(
         MODULE,
@@ -176,7 +184,9 @@ if __name__ == "__main__":
         Node.NoLearningPolicy.LEAST_LOADED_AWARE_CLOUD,
         Node.NoLearningPolicy.MAXIMUM_LIFESPANE,
         Node.NoLearningPolicy.RANDOM,
-        Node.NoLearningPolicy.SCORE_SIMPLE,
+        # LBF baseline (SCORE_SIMPLE): keep in repo but disabled for this LBFC-focused batch.
+        # Node.NoLearningPolicy.SCORE_SIMPLE,
+        Node.NoLearningPolicy.LBFC,
     ]
 
     processes: list[multiprocessing.Process] = []
